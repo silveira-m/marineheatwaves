@@ -1,3 +1,36 @@
-# Python cache
+
+
+*.pkl# Large data output files
+DATA/OUTPUT/*.nc
+DATA/OUTPUT/*.pkl
+*.pkl
+
+# General large binary/data formats
+*.nc
+*.h5
+*.hdf5
+*.hdf
+*.mat
+*.npy
+*.npz
+*.zarr
+
+# Raw input data (often large)
+DATA/INPUT/
+DATA/RAW/
+
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+.env
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
