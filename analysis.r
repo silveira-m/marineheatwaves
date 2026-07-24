@@ -1,6 +1,11 @@
 ## ============================================================
 ## Marine Heatwave (MHW) Time Series Analysis — Portugal (OISST, 1981-2025)
-## Standalone R script (no external files needed besides the CSV below)
+## Standalone R script — analyses ALL 6 variables in the long CSV:
+##   activity_degC_days_m2, number_of_events, sum_area_km2,
+##   mean_intensity_degC, mean_duration_days, mean_area_km2
+## Each variable gets its own results folder "<variable>_results/"
+## with the same STL/GESD, annual, breakpoint, seasonal, monthly,
+## and DFA outputs as the original single-variable script.
 ## ============================================================
 
 ## ---- Setup ----
@@ -39,17 +44,21 @@ linear_label <- function(model) {
           signif(co[2], 3), signif(s$r.squared, 3), signif(s$coefficients[2, 4], 3))
 }
 
-## ---- Load data ----
+## ---- Load data (once, all variables) ----
 # >>> EDIT THIS if the CSV is not in the same folder <<<
-data_file <- "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_800m_bathymetry.csv"
+data_file <- "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/801_1000m/MHW_summary_table_long_oisst.19812025.Portugal_1000m_bathymetry.csv"
 stopifnot(file.exists(data_file))
-
-variable    <- "MHW800m"
-results_dir <- paste0(variable, "_results")
-if (!dir.exists(results_dir)) dir.create(results_dir)
 
 raw <- read_csv(data_file, show_col_types = FALSE)
 stopifnot(all(c("Year", "Month", "Zone", "Parameter", "Value") %in% names(raw)))
+
+# Pull the bathymetry depth out of the filename (e.g. "...1000m_bathymetry.csv"
+# -> "1000m") so results from different bathymetry cutoffs land in separate
+# folders instead of overwriting each other. Falls back to "unknown_depth"
+# if the filename doesn't follow the expected "<depth>m_bathymetry" pattern.
+bathymetry_tag <- str_extract(data_file, "\\d+m(?=_bathymetry)")
+if (is.na(bathymetry_tag)) bathymetry_tag <- "unknown_depth"
+message("Bathymetry tag detected: ", bathymetry_tag)
 
 raw <- raw %>%
   mutate(
@@ -67,250 +76,317 @@ raw <- raw %>%
     )
   )
 
+# All 6 event-summary metrics are NA in months with no MHW event, so NA
+# is filled with 0 (not dropped) for every one of them. This is the same
+# treatment the original script applied only to activity_degC_days_m2.
 data_wide <- raw %>%
   select(Year, Month, date, month_name, season, Zone, Parameter, Value) %>%
   pivot_wider(names_from = Parameter, values_from = Value) %>%
   arrange(Zone, date) %>%
   mutate(
-    number_of_events = replace_na(number_of_events, 0),
-    sum_area_km2      = replace_na(sum_area_km2, 0)
+    across(
+      c(activity_degC_days_m2, number_of_events, sum_area_km2,
+        mean_intensity_degC, mean_duration_days, mean_area_km2),
+      ~ replace_na(.x, 0)
+    )
   )
 
-## ---- STL decomposition + GESD anomaly detection ----
+## ---- Variable configuration ----
+## agg_fun: how to aggregate the monthly value into an annual/seasonal/
+##   monthly-climatology figure. "sum" = totals over the period (activity,
+##   event counts, total area). "mean" = averages over the period (mean
+##   intensity, mean duration, mean area) — summing these wouldn't be
+##   physically meaningful.
+all_variables <- c(
+  "activity_degC_days_m2", "number_of_events", "sum_area_km2",
+  "mean_intensity_degC", "mean_duration_days", "mean_area_km2"
+)
+
+agg_fun_for <- function(var) {
+  if (var %in% c("activity_degC_days_m2", "number_of_events", "sum_area_km2")) "sum" else "mean"
+}
+
+y_label_for <- function(var) {
+  switch(var,
+    "activity_degC_days_m2" = expression(degree*C~days~m^-2),
+    "number_of_events"      = "Number of events",
+    "sum_area_km2"          = expression(Total~area~(km^2)),
+    "mean_intensity_degC"   = expression(Mean~intensity~(degree*C)),
+    "mean_duration_days"    = "Mean duration (days)",
+    "mean_area_km2"         = expression(Mean~area~(km^2))
+  )
+}
+
+display_name_for <- function(var) {
+  switch(var,
+    "activity_degC_days_m2" = "MHW Activity",
+    "number_of_events"      = "MHW Event Count",
+    "sum_area_km2"          = "MHW Total Area",
+    "mean_intensity_degC"   = "MHW Mean Intensity",
+    "mean_duration_days"    = "MHW Mean Duration",
+    "mean_area_km2"         = "MHW Mean Area"
+  )
+}
+
 t_window <- 133
 alpha    <- 0.05
 
-run_stl_for_zone <- function(zone) {
-  df_zone <- data_wide %>% filter(Zone == zone) %>% arrange(date)
-  ts_zone <- ts(df_zone$activity_degC_days_m2,
-                start = c(df_zone$Year[1], df_zone$Month[1]), frequency = 12)
-  
-  ts_zone %>%
-    stl(s.window = "periodic", t.window = t_window, robust = TRUE) %>%
-    .$time.series %>%
-    tsdf() %>%
-    as_tibble() %>%
-    anomalize(remainder, alpha = alpha, method = "gesd") %>%
-    mutate(observed = trend + remainder + seasonal, Zone = zone)
-}
+## ---- Full analysis pipeline for one variable ----
+analyse_variable <- function(var) {
 
-data_stl <- map_dfr(levels(data_wide$Zone), run_stl_for_zone) %>%
-  mutate(Zone = factor(Zone, levels = levels(data_wide$Zone)))
+  message("== Analysing: ", var, " ==")
 
-write_csv(data_stl, file.path(results_dir, paste0(variable, "_stl_anomalies.csv")))
+  agg_fun     <- agg_fun_for(var)
+  y_lab       <- y_label_for(var)
+  disp_name   <- display_name_for(var)
+  results_dir <- file.path(bathymetry_tag, paste0(var, "_results"))
+  if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE)
 
-plot_stl <- data_stl %>%
-  pivot_longer(cols = c(observed, trend, seasonal, remainder),
-               names_to = "component", values_to = "value") %>%
-  mutate(component = factor(component, levels = c("observed", "trend", "seasonal", "remainder")))
+  # Generic working frame: rename target column to "value" so the rest of
+  # the pipeline is identical regardless of which variable is being run.
+  dw <- data_wide %>% rename(value = all_of(var))
 
-obs_panel <- ggplot(filter(plot_stl, component == "observed"), aes(x, value, color = Zone)) +
-  geom_line() +
-  geom_point(data = filter(plot_stl, component == "observed", anomaly == "Yes"),
-             shape = 21, size = 2.5, fill = "white") +
-  facet_grid2(component ~ Zone, scales = "free_y", independent = "y") +
-  scale_color_manual(values = palette_zone) +
-  labs(title = "Observed MHW activity & anomalies", x = NULL, y = expression(degree*C~days~m^-2)) +
-  theme(legend.position = "none")
+  ## ---- STL decomposition + GESD anomaly detection ----
+  run_stl_for_zone <- function(zone) {
+    df_zone <- dw %>% filter(Zone == zone) %>% arrange(date)
+    ts_zone <- ts(df_zone$value,
+                  start = c(df_zone$Year[1], df_zone$Month[1]), frequency = 12)
 
-decomp_panel <- ggplot(filter(plot_stl, component != "observed"), aes(x, value, color = Zone)) +
-  geom_line() +
-  geom_point(data = filter(plot_stl, component == "remainder", anomaly == "Yes"), size = 1.5) +
-  facet_grid2(component ~ Zone, scales = "free_y", independent = "y") +
-  scale_color_manual(values = palette_zone) +
-  labs(x = NULL, y = NULL) +
-  theme(legend.position = "none", strip.text.x = element_blank())
-
-stl_combo <- plot_grid(obs_panel, decomp_panel, ncol = 1, rel_heights = c(1.2, 2))
-print(stl_combo)
-ggsave(file.path(results_dir, paste0(variable, "_stl.png")), stl_combo,
-       width = 260, height = 220, units = "mm", dpi = 400)
-
-## ---- Annual means, trends & breakpoints ----
-data_annual <- data_wide %>%
-  group_by(Zone, Year) %>%
-  summarise(
-    activity_total       = sum(activity_degC_days_m2, na.rm = TRUE),
-    events_total          = sum(number_of_events, na.rm = TRUE),
-    area_total_km2        = sum(sum_area_km2, na.rm = TRUE),
-    intensity_mean_degC   = mean(mean_intensity_degC, na.rm = TRUE),
-    duration_mean_days    = mean(mean_duration_days, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(across(c(intensity_mean_degC, duration_mean_days), ~ ifelse(is.nan(.x), NA, .x)))
-
-write_csv(data_annual, file.path(results_dir, paste0(variable, "_annual_summary.csv")))
-
-annual_trend_tests <- data_annual %>%
-  group_by(Zone) %>%
-  summarise(
-    lm_slope  = coef(lm(activity_total ~ Year))[2],
-    lm_p      = summary(lm(activity_total ~ Year))$coefficients[2, 4],
-    lm_r2     = summary(lm(activity_total ~ Year))$r.squared,
-    mk_tau    = Kendall::MannKendall(activity_total)$tau,
-    mk_p      = Kendall::MannKendall(activity_total)$sl,
-    sen_slope = trend::sens.slope(activity_total)$estimates,
-    .groups = "drop"
-  )
-write_csv(annual_trend_tests, file.path(results_dir, paste0(variable, "_annual_trend_tests.csv")))
-print(annual_trend_tests)
-
-annual_plot <- ggplot(data_annual, aes(Year, activity_total, color = Zone, fill = Zone)) +
-  geom_smooth(method = "lm", alpha = 0.15) +
-  geom_line() +
-  geom_point(size = 1.2) +
-  facet_grid(Zone ~ ., scales = "free_y") +
-  scale_color_manual(values = palette_zone) +
-  scale_fill_manual(values = palette_zone) +
-  labs(title = "Annual total MHW activity", x = NULL, y = expression(degree*C~days~m^-2)) +
-  theme(legend.position = "none")
-print(annual_plot)
-ggsave(file.path(results_dir, paste0(variable, "_annual.png")), annual_plot,
-       width = 150, height = 170, units = "mm", dpi = 400)
-
-find_breaks <- function(zone) {
-  df_zone <- data_annual %>% filter(Zone == zone) %>% arrange(Year)
-  ts_zone <- ts(df_zone$activity_total, start = min(df_zone$Year), frequency = 1)
-  bp <- tryCatch(strucchange::breakpoints(ts_zone ~ 1), error = function(e) NULL)
-  
-  out <- tibble(Year = df_zone$Year, value = df_zone$activity_total, Zone = zone, breakpoint = FALSE)
-  if (!is.null(bp) && length(bp$breakpoints) > 0 && !anyNA(bp$breakpoints)) {
-    bp_years <- df_zone$Year[bp$breakpoints]
-    out$breakpoint[out$Year %in% bp_years] <- TRUE
+    ts_zone %>%
+      stl(s.window = "periodic", t.window = t_window, robust = TRUE) %>%
+      .$time.series %>%
+      tsdf() %>%
+      as_tibble() %>%
+      anomalize(remainder, alpha = alpha, method = "gesd") %>%
+      mutate(observed = trend + remainder + seasonal, Zone = zone)
   }
-  out
+
+  data_stl <- map_dfr(levels(dw$Zone), run_stl_for_zone) %>%
+    mutate(Zone = factor(Zone, levels = levels(dw$Zone)))
+
+  write_csv(data_stl, file.path(results_dir, paste0(var, "_stl_anomalies.csv")))
+
+  plot_stl <- data_stl %>%
+    pivot_longer(cols = c(observed, trend, seasonal, remainder),
+                 names_to = "component", values_to = "val") %>%
+    mutate(component = factor(component, levels = c("observed", "trend", "seasonal", "remainder")))
+
+  obs_panel <- ggplot(filter(plot_stl, component == "observed"), aes(x, val, color = Zone)) +
+    geom_line() +
+    geom_point(data = filter(plot_stl, component == "observed", anomaly == "Yes"),
+               shape = 21, size = 2.5, fill = "white") +
+    facet_grid2(component ~ Zone, scales = "free_y", independent = "y") +
+    scale_color_manual(values = palette_zone) +
+    labs(title = paste0("Observed ", disp_name, " & anomalies"), x = NULL, y = y_lab) +
+    theme(legend.position = "none")
+
+  decomp_panel <- ggplot(filter(plot_stl, component != "observed"), aes(x, val, color = Zone)) +
+    geom_line() +
+    geom_point(data = filter(plot_stl, component == "remainder", anomaly == "Yes"), size = 1.5) +
+    facet_grid2(component ~ Zone, scales = "free_y", independent = "y") +
+    scale_color_manual(values = palette_zone) +
+    labs(x = NULL, y = NULL) +
+    theme(legend.position = "none", strip.text.x = element_blank())
+
+  stl_combo <- plot_grid(obs_panel, decomp_panel, ncol = 1, rel_heights = c(1.2, 2))
+  print(stl_combo)
+  ggsave(file.path(results_dir, paste0(var, "_stl.png")), stl_combo,
+         width = 260, height = 220, units = "mm", dpi = 400)
+
+  ## ---- Annual means/totals, trends & breakpoints ----
+  data_annual <- dw %>%
+    group_by(Zone, Year) %>%
+    summarise(
+      value_annual = if (agg_fun == "sum") sum(value, na.rm = TRUE) else mean(value, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  write_csv(data_annual, file.path(results_dir, paste0(var, "_annual_summary.csv")))
+
+  annual_trend_tests <- data_annual %>%
+    group_by(Zone) %>%
+    summarise(
+      lm_slope  = coef(lm(value_annual ~ Year))[2],
+      lm_p      = summary(lm(value_annual ~ Year))$coefficients[2, 4],
+      lm_r2     = summary(lm(value_annual ~ Year))$r.squared,
+      mk_tau    = Kendall::MannKendall(value_annual)$tau,
+      mk_p      = Kendall::MannKendall(value_annual)$sl,
+      sen_slope = trend::sens.slope(value_annual)$estimates,
+      .groups = "drop"
+    )
+  write_csv(annual_trend_tests, file.path(results_dir, paste0(var, "_annual_trend_tests.csv")))
+  print(annual_trend_tests)
+
+  annual_plot <- ggplot(data_annual, aes(Year, value_annual, color = Zone, fill = Zone)) +
+    geom_smooth(method = "lm", alpha = 0.15) +
+    geom_line() +
+    geom_point(size = 1.2) +
+    facet_grid(Zone ~ ., scales = "free_y") +
+    scale_color_manual(values = palette_zone) +
+    scale_fill_manual(values = palette_zone) +
+    labs(title = paste0("Annual ", ifelse(agg_fun == "sum", "total ", "mean "), disp_name),
+         x = NULL, y = y_lab) +
+    theme(legend.position = "none")
+  print(annual_plot)
+  ggsave(file.path(results_dir, paste0(var, "_annual.png")), annual_plot,
+         width = 150, height = 170, units = "mm", dpi = 400)
+
+  find_breaks <- function(zone) {
+    df_zone <- data_annual %>% filter(Zone == zone) %>% arrange(Year)
+    ts_zone <- ts(df_zone$value_annual, start = min(df_zone$Year), frequency = 1)
+    bp <- tryCatch(strucchange::breakpoints(ts_zone ~ 1), error = function(e) NULL)
+
+    out <- tibble(Year = df_zone$Year, value = df_zone$value_annual, Zone = zone, breakpoint = FALSE)
+    if (!is.null(bp) && length(bp$breakpoints) > 0 && !anyNA(bp$breakpoints)) {
+      bp_years <- df_zone$Year[bp$breakpoints]
+      out$breakpoint[out$Year %in% bp_years] <- TRUE
+    }
+    out
+  }
+
+  data_bp <- map_dfr(levels(dw$Zone), find_breaks) %>%
+    mutate(Zone = factor(Zone, levels = levels(dw$Zone)))
+
+  bp_plot <- ggplot(data_bp, aes(Year, value)) +
+    geom_line(color = "grey60") +
+    geom_vline(data = filter(data_bp, breakpoint), aes(xintercept = Year),
+               color = "firebrick", linetype = "dashed") +
+    geom_text(data = filter(data_bp, breakpoint), aes(x = Year, y = max(data_bp$value), label = Year),
+              angle = 90, vjust = -0.4, hjust = 1, size = 3, color = "firebrick") +
+    facet_grid(Zone ~ ., scales = "free_y") +
+    labs(title = paste0("Trend changes / breakpoints — ", disp_name), x = NULL, y = y_lab)
+  print(bp_plot)
+  ggsave(file.path(results_dir, paste0(var, "_annual_breakpoints.png")), bp_plot,
+         width = 150, height = 170, units = "mm", dpi = 400)
+
+  ## ---- Seasonal means (climatological — always mean, regardless of agg_fun) ----
+  data_seasonal <- dw %>%
+    group_by(Zone, season, Year) %>%
+    summarise(value_mean = mean(value, na.rm = TRUE), .groups = "drop")
+
+  write_csv(
+    data_seasonal %>% pivot_wider(names_from = Zone, values_from = value_mean),
+    file.path(results_dir, paste0(var, "_seasonal_summary.csv"))
+  )
+
+  seasonal_trend_tests <- data_seasonal %>%
+    group_by(Zone, season) %>%
+    summarise(
+      lm_slope = coef(lm(value_mean ~ Year))[2],
+      lm_p     = summary(lm(value_mean ~ Year))$coefficients[2, 4],
+      .groups = "drop"
+    )
+  write_csv(seasonal_trend_tests, file.path(results_dir, paste0(var, "_seasonal_trend_tests.csv")))
+
+  seasonal_box <- ggplot(dw, aes(x = season, y = value, color = Zone)) +
+    geom_boxplot() +
+    facet_grid(Zone ~ .) +
+    scale_color_manual(values = palette_zone) +
+    labs(title = paste0("Seasonal distribution of monthly ", disp_name), x = NULL, y = y_lab) +
+    theme(legend.position = "none")
+
+  seasonal_trend_plot <- ggplot(data_seasonal, aes(Year, value_mean, color = Zone, fill = Zone)) +
+    geom_point(alpha = 0.3) +
+    geom_smooth(method = "lm", se = TRUE) +
+    facet_grid(Zone ~ season, scales = "free_y") +
+    scale_color_manual(values = palette_zone) +
+    scale_fill_manual(values = palette_zone) +
+    labs(title = paste0("Seasonal trends — ", disp_name), x = NULL, y = y_lab) +
+    theme(legend.position = "none")
+
+  print(seasonal_box)
+  print(seasonal_trend_plot)
+  ggsave(file.path(results_dir, paste0(var, "_seasonal_box.png")), seasonal_box,
+         width = 183, height = 150, units = "mm", dpi = 400)
+  ggsave(file.path(results_dir, paste0(var, "_seasonal_trend.png")), seasonal_trend_plot,
+         width = 183, height = 150, units = "mm", dpi = 400)
+
+  ## ---- Monthly means / climatology ----
+  data_monthly <- dw %>%
+    group_by(Zone, month_name, Month) %>%
+    summarise(value_mean = mean(value, na.rm = TRUE), .groups = "drop")
+
+  monthly_trend_tests <- dw %>%
+    group_by(Zone, month_name) %>%
+    summarise(
+      lm_slope = coef(lm(value ~ Year))[2],
+      lm_p     = summary(lm(value ~ Year))$coefficients[2, 4],
+      .groups = "drop"
+    )
+  write_csv(monthly_trend_tests, file.path(results_dir, paste0(var, "_monthly_trend_tests.csv")))
+
+  monthly_climatology <- ggplot(data_monthly, aes(month_name, value_mean, group = Zone, color = Zone)) +
+    geom_line() +
+    geom_point() +
+    scale_color_manual(values = palette_zone) +
+    labs(title = paste0("Monthly climatology — ", disp_name), x = NULL, y = y_lab, color = "Zone") +
+    theme(axis.text.x = element_text(angle = 90))
+
+  monthly_box <- ggplot(dw, aes(month_name, value, color = Zone)) +
+    geom_boxplot(outlier.size = 0.7) +
+    facet_grid(Zone ~ .) +
+    scale_color_manual(values = palette_zone) +
+    labs(title = paste0("Monthly means — ", disp_name), x = NULL, y = y_lab) +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+
+  monthly_combo <- plot_grid(monthly_box, monthly_climatology, rel_widths = c(2, 1.3), nrow = 1)
+  print(monthly_combo)
+  ggsave(file.path(results_dir, paste0(var, "_monthly.png")), monthly_combo,
+         width = 220, height = 120, units = "mm", dpi = 400)
+
+  ## ---- Dynamic Factor Analysis (common trends across zones) ----
+  dfa_wide <- data_annual %>%
+    select(Zone, Year, value_annual) %>%
+    pivot_wider(names_from = Zone, values_from = value_annual) %>%
+    arrange(Year)
+
+  dfa_mat   <- dfa_wide %>% select(-Year) %>% as.matrix() %>% t()
+  # Guard against zero-variance rows (e.g. a zone with no events at all),
+  # which would make z-scoring blow up to NaN/Inf.
+  row_sd <- apply(dfa_mat, 1, sd, na.rm = TRUE)
+  if (any(row_sd == 0 | is.na(row_sd))) {
+    message("  Skipping DFA for ", var, ": one or more zones have zero variance.")
+    return(invisible(NULL))
+  }
+  dfa_mat_z <- t(scale(t(dfa_mat)))
+  rownames(dfa_mat_z) <- colnames(dfa_wide)[-1]
+  colnames(dfa_mat_z) <- dfa_wide$Year
+
+  fit_dfa <- function(n_trends) {
+    MARSS(dfa_mat_z, model = list(m = n_trends, R = "diagonal and equal"),
+          form = "dfa", z.score = FALSE, silent = TRUE, control = list(maxit = 2000))
+  }
+
+  dfa_models <- map(1:min(2, nrow(dfa_mat_z) - 1), fit_dfa)
+  aicc_vals  <- map_dbl(dfa_models, ~ .x$AICc)
+  best_dfa   <- dfa_models[[which.min(aicc_vals)]]
+
+  print(tibble(n_trends = seq_along(aicc_vals), AICc = aicc_vals))
+
+  trends_est <- as.data.frame(t(best_dfa$states)) %>%
+    mutate(Year = dfa_wide$Year) %>%
+    pivot_longer(-Year, names_to = "trend", values_to = "trend_value")
+
+  dfa_plot <- ggplot(trends_est, aes(Year, trend_value, color = trend)) +
+    geom_line(linewidth = 1) +
+    labs(title = paste0(disp_name, " — MARSS/DFA common trend(s), best model m = ", best_dfa$call$model$m),
+         x = NULL, y = "Trend (standardized units)")
+  print(dfa_plot)
+  ggsave(file.path(results_dir, paste0(var, "_dfa.png")), dfa_plot,
+         width = 183, height = 120, units = "mm", dpi = 400)
+
+  loadings <- as.data.frame(coef(best_dfa, type = "matrix")$Z)
+  rownames(loadings) <- rownames(dfa_mat_z)
+  write_csv(loadings %>% rownames_to_column("Zone"), file.path(results_dir, paste0(var, "_dfa_loadings.csv")))
+  print(loadings)
+
+  invisible(NULL)
 }
 
-data_bp <- map_dfr(levels(data_wide$Zone), find_breaks) %>%
-  mutate(Zone = factor(Zone, levels = levels(data_wide$Zone)))
-
-bp_plot <- ggplot(data_bp, aes(Year, value)) +
-  geom_line(color = "grey60") +
-  geom_vline(data = filter(data_bp, breakpoint), aes(xintercept = Year),
-             color = "firebrick", linetype = "dashed") +
-  geom_text(data = filter(data_bp, breakpoint), aes(x = Year, y = max(data_bp$value), label = Year),
-            angle = 90, vjust = -0.4, hjust = 1, size = 3, color = "firebrick") +
-  facet_grid(Zone ~ ., scales = "free_y") +
-  labs(title = "Trend changes / breakpoints in annual MHW activity", x = NULL,
-       y = expression(degree*C~days~m^-2))
-print(bp_plot)
-ggsave(file.path(results_dir, paste0(variable, "_annual_breakpoints.png")), bp_plot,
-       width = 150, height = 170, units = "mm", dpi = 400)
-
-## ---- Seasonal means ----
-data_seasonal <- data_wide %>%
-  group_by(Zone, season, Year) %>%
-  summarise(activity_mean = mean(activity_degC_days_m2, na.rm = TRUE), .groups = "drop")
-
-write_csv(
-  data_seasonal %>% pivot_wider(names_from = Zone, values_from = activity_mean),
-  file.path(results_dir, paste0(variable, "_seasonal_summary.csv"))
-)
-
-seasonal_trend_tests <- data_seasonal %>%
-  group_by(Zone, season) %>%
-  summarise(
-    lm_slope = coef(lm(activity_mean ~ Year))[2],
-    lm_p     = summary(lm(activity_mean ~ Year))$coefficients[2, 4],
-    .groups = "drop"
-  )
-write_csv(seasonal_trend_tests, file.path(results_dir, paste0(variable, "_seasonal_trend_tests.csv")))
-
-seasonal_box <- ggplot(data_wide, aes(x = season, y = activity_degC_days_m2, color = Zone)) +
-  geom_boxplot() +
-  facet_grid(Zone ~ .) +
-  scale_color_manual(values = palette_zone) +
-  labs(title = "Seasonal distribution of monthly MHW activity", x = NULL,
-       y = expression(degree*C~days~m^-2)) +
-  theme(legend.position = "none")
-
-seasonal_trend_plot <- ggplot(data_seasonal, aes(Year, activity_mean, color = Zone, fill = Zone)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", se = TRUE) +
-  facet_grid(Zone ~ season, scales = "free_y") +
-  scale_color_manual(values = palette_zone) +
-  scale_fill_manual(values = palette_zone) +
-  labs(title = "Seasonal trends", x = NULL, y = expression(degree*C~days~m^-2)) +
-  theme(legend.position = "none")
-
-print(seasonal_box)
-print(seasonal_trend_plot)
-ggsave(file.path(results_dir, paste0(variable, "_seasonal_box.png")), seasonal_box,
-       width = 183, height = 150, units = "mm", dpi = 400)
-ggsave(file.path(results_dir, paste0(variable, "_seasonal_trend.png")), seasonal_trend_plot,
-       width = 183, height = 150, units = "mm", dpi = 400)
-
-## ---- Monthly means / climatology ----
-data_monthly <- data_wide %>%
-  group_by(Zone, month_name, Month) %>%
-  summarise(activity_mean = mean(activity_degC_days_m2, na.rm = TRUE), .groups = "drop")
-
-monthly_trend_tests <- data_wide %>%
-  group_by(Zone, month_name) %>%
-  summarise(
-    lm_slope = coef(lm(activity_degC_days_m2 ~ Year))[2],
-    lm_p     = summary(lm(activity_degC_days_m2 ~ Year))$coefficients[2, 4],
-    .groups = "drop"
-  )
-write_csv(monthly_trend_tests, file.path(results_dir, paste0(variable, "_monthly_trend_tests.csv")))
-
-monthly_climatology <- ggplot(data_monthly, aes(month_name, activity_mean, group = Zone, color = Zone)) +
-  geom_line() +
-  geom_point() +
-  scale_color_manual(values = palette_zone) +
-  labs(title = "Monthly climatology of MHW activity", x = NULL,
-       y = expression(degree*C~days~m^-2), color = "Zone") +
-  theme(axis.text.x = element_text(angle = 90))
-
-monthly_box <- ggplot(data_wide, aes(month_name, activity_degC_days_m2, color = Zone)) +
-  geom_boxplot(outlier.size = 0.7) +
-  facet_grid(Zone ~ .) +
-  scale_color_manual(values = palette_zone) +
-  labs(title = "Monthly means", x = NULL, y = expression(degree*C~days~m^-2)) +
-  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
-
-monthly_combo <- plot_grid(monthly_box, monthly_climatology, rel_widths = c(2, 1.3), nrow = 1)
-print(monthly_combo)
-ggsave(file.path(results_dir, paste0(variable, "_monthly.png")), monthly_combo,
-       width = 220, height = 120, units = "mm", dpi = 400)
-
-## ---- Dynamic Factor Analysis (common trends across zones) ----
-dfa_wide <- data_annual %>%
-  select(Zone, Year, activity_total) %>%
-  pivot_wider(names_from = Zone, values_from = activity_total) %>%
-  arrange(Year)
-
-dfa_mat   <- dfa_wide %>% select(-Year) %>% as.matrix() %>% t()
-dfa_mat_z <- t(scale(t(dfa_mat)))
-rownames(dfa_mat_z) <- colnames(dfa_wide)[-1]
-colnames(dfa_mat_z) <- dfa_wide$Year
-
-fit_dfa <- function(n_trends) {
-  MARSS(dfa_mat_z, model = list(m = n_trends, R = "diagonal and equal"),
-        form = "dfa", z.score = FALSE, silent = TRUE, control = list(maxit = 2000))
+## ---- Run for every variable ----
+for (v in all_variables) {
+  analyse_variable(v)
 }
-
-dfa_models <- map(1:min(2, nrow(dfa_mat_z) - 1), fit_dfa)
-aicc_vals  <- map_dbl(dfa_models, ~ .x$AICc)
-best_dfa   <- dfa_models[[which.min(aicc_vals)]]
-
-print(tibble(n_trends = seq_along(aicc_vals), AICc = aicc_vals))
-
-trends_est <- as.data.frame(t(best_dfa$states)) %>%
-  mutate(Year = dfa_wide$Year) %>%
-  pivot_longer(-Year, names_to = "trend", values_to = "value")
-
-dfa_plot <- ggplot(trends_est, aes(Year, value, color = trend)) +
-  geom_line(linewidth = 1) +
-  labs(title = paste0("MARSS/DFA common trend(s) — best model: m = ", best_dfa$call$model$m),
-       x = NULL, y = "Trend (standardized units)")
-print(dfa_plot)
-ggsave(file.path(results_dir, paste0(variable, "_dfa.png")), dfa_plot,
-       width = 183, height = 120, units = "mm", dpi = 400)
-
-loadings <- as.data.frame(coef(best_dfa, type = "matrix")$Z)
-rownames(loadings) <- rownames(dfa_mat_z)
-print(loadings)
 
 ## ---- Done ----
 sessionInfo()
