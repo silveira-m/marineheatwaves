@@ -1,0 +1,92 @@
+Parameter: activity_degC_days_m2 
+Filter: Zone_NW-SW-S 
+Time aggregation: annual 
+
+  m          R_structure     AICc   logLik converged
+1 3 diagonal and unequal 152.6019 -479.711     FALSE
+
+MODEL OBJECT:
+
+MARSS fit is
+Estimation method: kem 
+Convergence test: conv.test.slope.tol = 0.5, abstol = 0.001
+WARNING: Estimation was stopped at iteration 45 due to errors.
+ Parameter estimates are those at the last iteration before stopping
+ see $errors element of marssMLE object to view errors
+Log-likelihood: -13.94275 
+
+ 
+                                         Estimate
+Z.11                                     1.17e+00
+Z.21                                     1.15e+00
+Z.31                                     1.20e+00
+Z.41                                     1.15e+00
+Z.51                                     1.21e+00
+Z.61                                     3.42e-01
+Z.71                                     7.86e-01
+Z.81                                     7.81e-01
+Z.91                                     8.30e-01
+Z.101                                    8.46e-01
+Z.111                                    1.66e-01
+Z.121                                    4.30e-01
+Z.131                                    4.30e-01
+Z.141                                    3.71e-01
+Z.151                                    3.40e-01
+Z.22                                     3.58e-01
+Z.32                                     2.97e-01
+Z.42                                     3.34e-01
+Z.52                                     1.39e-01
+Z.62                                     4.31e-01
+Z.72                                     9.51e-01
+Z.82                                     9.87e-01
+Z.92                                     1.00e+00
+Z.102                                    9.78e-01
+Z.112                                   -7.67e-01
+Z.122                                   -1.28e+00
+Z.132                                   -1.28e+00
+Z.142                                   -1.05e+00
+Z.152                                   -9.06e-01
+Z.33                                     7.54e-02
+Z.43                                    -9.50e-02
+Z.53                                    -6.13e-02
+Z.63                                     7.83e-01
+Z.73                                     1.03e+00
+Z.83                                     1.01e+00
+Z.93                                     1.05e+00
+Z.103                                    1.01e+00
+Z.113                                    5.61e-02
+Z.123                                    3.59e-01
+Z.133                                    3.59e-01
+Z.143                                    4.04e-01
+Z.153                                    2.26e-01
+R.(Zone_NW_Bath_1000,Zone_NW_Bath_1000)  1.20e-01
+R.(Zone_NW_Bath_200,Zone_NW_Bath_200)    8.71e-02
+R.(Zone_NW_Bath_400,Zone_NW_Bath_400)    7.98e-02
+R.(Zone_NW_Bath_600,Zone_NW_Bath_600)    3.07e-02
+R.(Zone_NW_Bath_800,Zone_NW_Bath_800)    1.91e-02
+R.(Zone_SW_Bath_1000,Zone_SW_Bath_1000)  5.88e-01
+R.(Zone_SW_Bath_200,Zone_SW_Bath_200)    8.16e-02
+R.(Zone_SW_Bath_400,Zone_SW_Bath_400)    9.15e-02
+R.(Zone_SW_Bath_600,Zone_SW_Bath_600)    2.32e-02
+R.(Zone_SW_Bath_800,Zone_SW_Bath_800)    5.23e-02
+R.(Zone_S_Bath_1000,Zone_S_Bath_1000)    7.07e-01
+R.(Zone_S_Bath_200,Zone_S_Bath_200)     -4.22e-11
+R.(Zone_S_Bath_400,Zone_S_Bath_400)     -4.22e-11
+R.(Zone_S_Bath_600,Zone_S_Bath_600)      2.31e-01
+R.(Zone_S_Bath_800,Zone_S_Bath_800)      4.91e-01
+Initial states (x0) defined at t=0
+
+Standard errors have not been calculated. 
+Use MARSSparamCIs to compute CIs and bias estimates.
+Stopped at iter=45 in MARSSkem: solution became unstable. R update is not positive definite.
+ par, kf, states, iter, loglike are the last values before the error.
+ Try control$safe=TRUE which uses a slower but slightly more robust algorithm.
+ Use control$trace=1 to generate a more detailed error report. See user guide for insight.
+
+
+TIDY:
+[1] "broom::tidy not available"
+
+GLANCE:
+MARSSresiduals.tt1 reported warnings. See msg element of returned residuals object.
+[1] "broom::glance not available"
