@@ -1,92 +1,120 @@
 Parameter: mean_area_km2 
 Filter: Zone_NW-SW-S 
 Time aggregation: annual 
+Selected model (m = 3 , equalvarcov ) - degenerate: FALSE 
 
-  m          R_structure      AICc    logLik converged
-1 3 diagonal and unequal -178.9556 -228.9229     FALSE
+  m R_structure    AICc    logLik converged degenerate min_R_variance
+1 3 equalvarcov 762.223 -333.6977      TRUE      FALSE      0.3845571
+  min_Q_variance degenerate_R_series degenerate_Q_trend delta_AICc AICc_support
+1              1                <NA>               <NA>   941.1786   No support
 
 MODEL OBJECT:
 
 MARSS fit is
 Estimation method: kem 
 Convergence test: conv.test.slope.tol = 0.5, abstol = 0.001
-WARNING: Estimation was stopped at iteration 46 due to errors.
- Parameter estimates are those at the last iteration before stopping
- see $errors element of marssMLE object to view errors
-Log-likelihood: 152.3085 
-
+Estimation converged in 2828 iterations. 
+Log-likelihood: -333.6977 
+AIC: 755.3955   AICc: 762.223   
  
-                                         Estimate
-Z.11                                     1.03e+00
-Z.21                                     1.03e+00
-Z.31                                     1.11e+00
-Z.41                                     1.11e+00
-Z.51                                     1.01e+00
-Z.61                                     5.23e-01
-Z.71                                     5.32e-01
-Z.81                                     5.36e-01
-Z.91                                     5.48e-01
-Z.101                                    5.56e-01
-Z.111                                    3.58e-01
-Z.121                                    1.22e+00
-Z.131                                    1.22e+00
-Z.141                                    1.08e+00
-Z.151                                    7.81e-01
-Z.22                                     3.29e-01
-Z.32                                     3.18e-01
-Z.42                                     2.99e-01
-Z.52                                     1.12e-01
-Z.62                                     1.56e+00
-Z.72                                     1.69e+00
-Z.82                                     1.70e+00
-Z.92                                     1.69e+00
-Z.102                                    1.65e+00
-Z.112                                   -5.67e-01
-Z.122                                   -2.22e-01
-Z.132                                   -2.22e-01
-Z.142                                   -3.19e-01
-Z.152                                   -3.17e-01
-Z.33                                     6.40e-02
-Z.43                                     6.02e-02
-Z.53                                    -4.82e-02
-Z.63                                     1.13e+00
-Z.73                                     1.11e+00
-Z.83                                     1.12e+00
-Z.93                                     1.16e+00
-Z.103                                    1.19e+00
-Z.113                                    3.84e-01
-Z.123                                    1.10e+00
-Z.133                                    1.10e+00
-Z.143                                    9.26e-01
-Z.153                                    6.90e-01
-R.(Zone_NW_Bath_1000,Zone_NW_Bath_1000)  4.19e-02
-R.(Zone_NW_Bath_200,Zone_NW_Bath_200)    6.39e-02
-R.(Zone_NW_Bath_400,Zone_NW_Bath_400)    1.41e-03
-R.(Zone_NW_Bath_600,Zone_NW_Bath_600)    2.34e-03
-R.(Zone_NW_Bath_800,Zone_NW_Bath_800)    3.18e-02
-R.(Zone_SW_Bath_1000,Zone_SW_Bath_1000)  1.07e-01
-R.(Zone_SW_Bath_200,Zone_SW_Bath_200)    3.81e-02
-R.(Zone_SW_Bath_400,Zone_SW_Bath_400)    1.87e-02
-R.(Zone_SW_Bath_600,Zone_SW_Bath_600)    1.27e-03
-R.(Zone_SW_Bath_800,Zone_SW_Bath_800)    9.91e-03
-R.(Zone_S_Bath_1000,Zone_S_Bath_1000)    6.14e-01
-R.(Zone_S_Bath_200,Zone_S_Bath_200)     -4.08e-09
-R.(Zone_S_Bath_400,Zone_S_Bath_400)     -4.08e-09
-R.(Zone_S_Bath_600,Zone_S_Bath_600)      1.54e-01
-R.(Zone_S_Bath_800,Zone_S_Bath_800)      4.87e-01
+          Estimate
+Z.11       0.84529
+Z.21       0.78381
+Z.31       0.81183
+Z.41       0.82034
+Z.51       0.83415
+Z.61      -0.76236
+Z.71      -0.76784
+Z.81      -0.76378
+Z.91      -0.78645
+Z.101     -0.80614
+Z.111      0.20767
+Z.121      0.12179
+Z.131      0.12179
+Z.141      0.19499
+Z.151      0.15881
+Z.22       0.14280
+Z.32       0.09141
+Z.42       0.06648
+Z.52       0.03738
+Z.62       0.66688
+Z.72       0.76390
+Z.82       0.75340
+Z.92       0.72368
+Z.102      0.71807
+Z.112     -0.97155
+Z.122     -0.21746
+Z.132     -0.21746
+Z.142     -0.33596
+Z.152     -0.65539
+Z.33       0.02652
+Z.43       0.02536
+Z.53      -0.00201
+Z.63      -0.28834
+Z.73      -0.30719
+Z.83      -0.34041
+Z.93      -0.30890
+Z.103     -0.25841
+Z.113      0.22650
+Z.123      1.18179
+Z.133      1.18179
+Z.143      1.12466
+Z.153      0.56558
+R.diag     0.38456
+R.offdiag  0.33085
 Initial states (x0) defined at t=0
 
 Standard errors have not been calculated. 
 Use MARSSparamCIs to compute CIs and bias estimates.
-Stopped at iter=46 in MARSSkem: solution became unstable. R update is not positive definite.
- par, kf, states, iter, loglike are the last values before the error.
- Try control$safe=TRUE which uses a slower but slightly more robust algorithm.
- Use control$trace=1 to generate a more detailed error report. See user guide for insight.
 
 
 TIDY:
-[1] "broom::tidy not available"
+        term     estimate  std.error    conf.low     conf.up
+1       Z.11  0.845292349 0.11528121  0.61934533  1.07123937
+2       Z.21  0.783806269 0.11203948  0.56421292  1.00339962
+3       Z.31  0.811826083 0.11323786  0.58988396  1.03376821
+4       Z.41  0.820343410 0.11353148  0.59782579  1.04286103
+5       Z.51  0.834146572 0.11428925  0.61014377  1.05814938
+6       Z.61 -0.762362957 0.16294718 -1.08173357 -0.44299235
+7       Z.71 -0.767844675 0.17681299 -1.11439176 -0.42129758
+8       Z.81 -0.763776753 0.17709938 -1.11088516 -0.41666835
+9       Z.91 -0.786450371 0.17260807 -1.12475596 -0.44814478
+10     Z.101 -0.806142508 0.17032729 -1.13997787 -0.47230715
+11     Z.111  0.207666996 0.19729966 -0.17903323  0.59436722
+12     Z.121  0.121793181 0.22990166 -0.32880580  0.57239216
+13     Z.131  0.121793181 0.22990166 -0.32880580  0.57239216
+14     Z.141  0.194990864 0.22594721 -0.24785754  0.63783926
+15     Z.151  0.158814513 0.17428457 -0.18277696  0.50040599
+16      Z.22  0.142795934 0.04073789  0.06295114  0.22264073
+17      Z.32  0.091408846 0.04004254  0.01292691  0.16989079
+18      Z.42  0.066478998 0.03942488 -0.01079235  0.14375034
+19      Z.52  0.037383729 0.03843448 -0.03794647  0.11271393
+20      Z.62  0.666878861 0.17766803  0.31865593  1.01510180
+21      Z.72  0.763902557 0.18652093  0.39832825  1.12947687
+22      Z.82  0.753402026 0.19132684  0.37840830  1.12839575
+23      Z.92  0.723682090 0.18563165  0.35985075  1.08751343
+24     Z.102  0.718074993 0.17849990  0.36822163  1.06792836
+25     Z.112 -0.971547171 0.14480706 -1.25536379 -0.68773055
+26     Z.122 -0.217462314 0.38818609 -0.97829308  0.54336845
+27     Z.132 -0.217462314 0.38818609 -0.97829308  0.54336845
+28     Z.142 -0.335955119 0.37011738 -1.06137186  0.38946162
+29     Z.152 -0.655389783 0.20570814 -1.05857033 -0.25220924
+30      Z.33  0.026516738 0.03614808 -0.04433219  0.09736567
+31      Z.43  0.025359841 0.03566924 -0.04455059  0.09527027
+32      Z.53 -0.002005262 0.03694979 -0.07442551  0.07041499
+33      Z.63 -0.288343995 0.23328052 -0.74556542  0.16887743
+34      Z.73 -0.307186571 0.25679966 -0.81050465  0.19613151
+35      Z.83 -0.340409643 0.25436843 -0.83896261  0.15814333
+36      Z.93 -0.308898053 0.24819155 -0.79534456  0.17754845
+37     Z.103 -0.258410204 0.24717313 -0.74286063  0.22604022
+38     Z.113  0.226498740 0.29034691 -0.34257075  0.79556823
+39     Z.123  1.181794630 0.16582463  0.85678432  1.50680494
+40     Z.133  1.181794630 0.16582463  0.85678432  1.50680494
+41     Z.143  1.124664319 0.17645111  0.77882650  1.47050214
+42     Z.153  0.565578630 0.21404589  0.14605639  0.98510087
+43    R.diag  0.384557109 0.07336677  0.24076088  0.52835334
+44 R.offdiag  0.330854470 0.07327934  0.18722959  0.47447935
 
 GLANCE:
-MARSSresiduals.tt1 reported warnings. See msg element of returned residuals object.
-[1] "broom::glance not available"
+     coef.det    sigma df    logLik      AIC    AICc convergence errors
+1 0.002106787 1.599581 44 -333.6977 755.3955 762.223           0      0
