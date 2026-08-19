@@ -408,9 +408,19 @@ plot_loadings <- function(Z, file_out, parameter_name, sig_stars = NULL){
   names(dfz) <- c("Series", "Trend", "Loading")
   dfz$Stars <- if(!is.null(sig_stars)) as.vector(sig_stars) else ""
   
+  # FIX: previously only `Stars` was plotted as the text label. When
+  # sig_stars is NULL (get_loading_significance() failed -- e.g.
+  # MARSSparamCIs() couldn't invert a near-singular Hessian, which happens
+  # often for degenerate models) every Stars value is "", so geom_text() was
+  # drawing empty strings on every tile -- i.e. no annotation at all, not
+  # just a missing star. Label now always includes the numeric loading
+  # value, with stars appended when available, so the heatmap is never
+  # fully blank even if significance testing itself couldn't be computed.
+  dfz$Label <- paste0(round(dfz$Loading, 2), dfz$Stars)
+  
   p <- ggplot(dfz, aes(x = Trend, y = Series, fill = Loading)) +
     geom_tile() +
-    geom_text(aes(label = Stars), color = "black", size = 4, fontface = "bold") +
+    geom_text(aes(label = Label), color = "black", size = 3.2, fontface = "bold") +
     scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b") +
     labs(title = paste("Factor loadings -", parameter_name),
          subtitle = "* p<0.05, ** p<0.01, *** p<0.001 (or * if only CI, no SE, available)",
@@ -617,6 +627,48 @@ plot_model_comparison <- function(model_sel, file_out, parameter_name){
   p
 }
 
+# --- NEW: visual (not just correlation-matrix) cross-parameter comparison --
+# Overlays the extracted common trends from different parameters' DFA runs
+# directly as time series, faceted by parameter, so patterns can be
+# compared by eye alongside the correlation heatmap/CSV from section 8.
+#
+# Each trend is z-scored before plotting. This isn't cosmetic: within any
+# single DFA fit, a trend and its loadings (Z) are only identifiable up to
+# an arbitrary joint rescaling (Z %*% trend is unchanged if you scale the
+# trend by k and the matching loadings by 1/k), so trends from two
+# DIFFERENT parameters' separately-fit models aren't on a comparable scale
+# to begin with. Standardizing makes the overlay an honest comparison of
+# SHAPE over time, which is the only thing that's meaningfully comparable
+# across models fit independently of each other.
+plot_cross_trends <- function(trend_wide, trend_cols, file_out, filter_label, time_agg){
+  df <- trend_wide
+  
+  for(col in trend_cols){
+    v <- df[[col]]
+    df[[col]] <- if(sum(!is.na(v)) > 1) as.numeric(scale(v)) else v
+  }
+  
+  df$TimeIndex <- seq_len(nrow(df))
+  
+  dfl <- pivot_longer(df, cols = all_of(trend_cols), names_to = "TrendID", values_to = "Value")
+  dfl$Parameter <- sub("_(X?[0-9]+|Trend[0-9]+)$", "", dfl$TrendID)
+  
+  p <- ggplot(dfl, aes(x = TimeIndex, y = Value, color = TrendID, group = TrendID)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+    geom_line(linewidth = 0.7, na.rm = TRUE) +
+    facet_wrap(~Parameter, ncol = 2) +
+    scale_x_continuous(breaks = seq_len(nrow(df)), labels = df$TimeLabel) +
+    labs(title = paste("Cross-parameter common trends (standardized) -", filter_label, time_agg),
+         subtitle = "Each trend z-scored for comparability; panels grouped by source parameter, shared time axis",
+         x = "Time", y = "Standardized trend value", color = "Trend") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+          legend.position = "bottom")
+  
+  ggsave(file_out, p, width = 12, height = 7, dpi = 300)
+  p
+}
+
 fit_dfa_models <- function(y, max_common_trends, R_structures,
                            zscore_series = TRUE, demean_series = TRUE,
                            degenerate_tol = 1e-4){
@@ -686,6 +738,14 @@ fit_dfa_models <- function(y, max_common_trends, R_structures,
 #---------------------------------------------------
 
 dat2 <- aggregate_time_series(dat1, time_agg = time_agg)
+
+# Global TimeLabel -> Time lookup, used later (section 8) to put
+# cross-parameter trends back in correct chronological order after they've
+# been merged by TimeLabel across multiple parameters' DFA runs. TimeLabel
+# alone isn't reliably sortable as a string for monthly/seasonal aggregation
+# (e.g. "2010_Winter" doesn't sort correctly alphabetically), so the
+# underlying numeric Time is kept alongside it.
+time_lookup <- dat2 %>% distinct(Time, TimeLabel) %>% arrange(Time)
 
 #---------------------------------------------------
 # 6. RUN DFA PARAMETER BY PARAMETER
@@ -1063,7 +1123,16 @@ if(length(trends_for_cross) >= 2){
   # computing each correlation (same approach used elsewhere in this script).
   trend_wide <- Reduce(function(a, b) full_join(a, b, by = "TimeLabel"), trends_for_cross)
   
-  trend_cols <- setdiff(names(trend_wide), "TimeLabel")
+  # Restore correct chronological row order using the global TimeLabel->Time
+  # lookup built in section 5 -- after full_join, row order otherwise just
+  # reflects however the joined data frames happened to line up, and
+  # TimeLabel itself isn't reliably string-sortable for monthly/seasonal
+  # aggregation.
+  trend_wide <- trend_wide %>%
+    left_join(time_lookup, by = "TimeLabel") %>%
+    arrange(Time)
+  
+  trend_cols <- setdiff(names(trend_wide), c("TimeLabel", "Time"))
   trend_mat <- t(as.matrix(trend_wide[, trend_cols, drop = FALSE]))
   colnames(trend_mat) <- trend_wide$TimeLabel
   storage.mode(trend_mat) <- "numeric"
@@ -1136,6 +1205,22 @@ if(length(trends_for_cross) >= 2){
            p, width = max(8, n_trends_total * 0.6), height = max(6, n_trends_total * 0.5), dpi = 300)
   }, error = function(e){
     cat("Skipping cross-parameter trend correlation plot - error:", conditionMessage(e), "\n")
+  })
+  
+  # Direct time-series overlay of the trends themselves, alongside the
+  # correlation heatmap above -- lets patterns be checked by eye, not just
+  # by correlation coefficient.
+  tryCatch({
+    plot_cross_trends(
+      trend_wide = trend_wide,
+      trend_cols = trend_cols,
+      file_out = file.path(results_dir, paste0(filter_label, "_", time_agg,
+                                                 "_cross_parameter_trends_plot.png")),
+      filter_label = filter_label,
+      time_agg = time_agg
+    )
+  }, error = function(e){
+    cat("Skipping cross-parameter trends overlay plot - error:", conditionMessage(e), "\n")
   })
   
   top_cross <- cross_df %>%

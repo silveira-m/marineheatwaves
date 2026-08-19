@@ -1,0 +1,137 @@
+Parameter: mean_intensity_degC 
+Filter: Zone_NW-SW-S 
+Time aggregation: monthly 
+Selected model (m = 3 , equalvarcov ) - degenerate: FALSE 
+
+  m R_structure      AICc   logLik converged degenerate min_R_variance
+1 3 equalvarcov -1435.256 762.2831     FALSE      FALSE      0.9566077
+  min_Q_variance degenerate_R_series degenerate_Q_trend delta_AICc AICc_support
+1              1                <NA>               <NA>    2061.64   No support
+
+MODEL OBJECT:
+
+MARSS fit is
+Estimation method: kem 
+Convergence test: conv.test.slope.tol = 0.5, abstol = 0.001
+WARNING: Abstol convergence only no log-log convergence.
+ maxit (=5000) reached before log-log convergence.
+ The likelihood and params might not be at the ML values.
+ Try setting control$maxit higher.
+Log-likelihood: 762.2831 
+AIC: -1436.566   AICc: -1435.256   
+ 
+           Estimate
+Z.11       0.127511
+Z.21       0.094060
+Z.31       0.125005
+Z.41       0.124592
+Z.51       0.127581
+Z.61       0.014716
+Z.71      -0.064301
+Z.81      -0.073318
+Z.91      -0.070335
+Z.101     -0.045536
+Z.111     -0.030602
+Z.121     -0.431559
+Z.131     -0.431559
+Z.141     -0.320018
+Z.151     -0.186636
+Z.22       0.024876
+Z.32       0.004014
+Z.42       0.000934
+Z.52       0.000743
+Z.62       0.633464
+Z.72       0.662929
+Z.82       0.661396
+Z.92       0.666456
+Z.102      0.663540
+Z.112      0.257985
+Z.122      0.202927
+Z.132      0.202927
+Z.142      0.219976
+Z.152      0.269875
+Z.33      -0.004616
+Z.43      -0.000798
+Z.53       0.000836
+Z.63       0.312063
+Z.73       0.329815
+Z.83       0.326453
+Z.93       0.322373
+Z.103      0.311940
+Z.113      0.923910
+Z.123      0.830751
+Z.133      0.830751
+Z.143      0.865863
+Z.153      0.905512
+R.diag     0.956608
+R.offdiag  0.949649
+Initial states (x0) defined at t=0
+
+Standard errors have not been calculated. 
+Use MARSSparamCIs to compute CIs and bias estimates.
+
+Convergence warnings
+11 warnings. First 10 shown.  Type cat(object$errors) to see the full list.
+ Warning: the  Z.61  parameter value has not converged.
+ Warning: the  Z.71  parameter value has not converged.
+ Warning: the  Z.81  parameter value has not converged.
+ Warning: the  Z.91  parameter value has not converged.
+ Warning: the  Z.101  parameter value has not converged.
+ Warning: the  Z.111  parameter value has not converged.
+ Warning: the  Z.52  parameter value has not converged.
+ Warning: the  Z.43  parameter value has not converged.
+ Warning: the  Z.53  parameter value has not converged.
+ Warning: the  logLik  parameter value has not converged.
+
+
+TIDY:
+        term      estimate   std.error     conf.low     conf.up
+1       Z.11  0.1275108992 0.031780273  0.065222709 0.189799089
+2       Z.21  0.0940596413 0.032268308  0.030814919 0.157304364
+3       Z.31  0.1250048071 0.031734292  0.062806737 0.187202877
+4       Z.41  0.1245915373 0.031713063  0.062435076 0.186747998
+5       Z.51  0.1275812590 0.031788390  0.065277159 0.189885359
+6       Z.61  0.0147155850 0.203133564 -0.383418885 0.412850054
+7       Z.71 -0.0643006552 0.212789662 -0.481360730 0.352759419
+8       Z.81 -0.0733183702 0.211955580 -0.488743673 0.342106933
+9       Z.91 -0.0703348994 0.212636025 -0.487093849 0.346424051
+10     Z.101 -0.0455356872 0.210487830 -0.458084253 0.367012878
+11     Z.111 -0.0306016635 0.271488734 -0.562709804 0.501506477
+12     Z.121 -0.4315592276 0.242756616 -0.907353453 0.044234998
+13     Z.131 -0.4315592276 0.242756616 -0.907353453 0.044234998
+14     Z.141 -0.3200179327 0.253094466 -0.816073971 0.176038105
+15     Z.151 -0.1866358192 0.267953584 -0.711815194 0.338543556
+16      Z.22  0.0248756772 0.009608989  0.006042405 0.043708949
+17      Z.32  0.0040138386 0.004992107 -0.005770512 0.013798189
+18      Z.42  0.0009335411 0.004778042 -0.008431249 0.010298331
+19      Z.52  0.0007425262 0.004804564 -0.008674246 0.010159299
+20      Z.62  0.6334641113 0.131153632  0.376407716 0.890520506
+21      Z.72  0.6629285091 0.145335426  0.378076308 0.947780710
+22      Z.82  0.6613955173 0.145116803  0.376971809 0.945819226
+23      Z.92  0.6664561431 0.143408716  0.385380225 0.947532062
+24     Z.102  0.6635402009 0.137028854  0.394968583 0.932111819
+25     Z.112  0.2579851361 0.364494115 -0.456410201 0.972380473
+26     Z.122  0.2029267150 0.365643561 -0.513721495 0.919574925
+27     Z.132  0.2029267150 0.365643561 -0.513721495 0.919574925
+28     Z.142  0.2199762621 0.365536417 -0.496461951 0.936414475
+29     Z.152  0.2698747574 0.367980952 -0.451354656 0.991104171
+30      Z.33 -0.0046157405 0.004753579 -0.013932585 0.004701104
+31      Z.43 -0.0007975608 0.004971438 -0.010541399 0.008946278
+32      Z.53  0.0008362473 0.005058233 -0.009077706 0.010750201
+33      Z.63  0.3120631276 0.219197076 -0.117555247 0.741681502
+34      Z.73  0.3298146024 0.213559906 -0.088755121 0.748384326
+35      Z.83  0.3264526376 0.211007132 -0.087113741 0.740019017
+36      Z.93  0.3223726657 0.213501264 -0.096082122 0.740827453
+37     Z.103  0.3119395168 0.217717124 -0.114778205 0.738657239
+38     Z.113  0.9239096894 0.083667856  0.759923705 1.087895674
+39     Z.123  0.8307512345 0.096061195  0.642474752 1.019027717
+40     Z.133  0.8307512345 0.096061195  0.642474752 1.019027717
+41     Z.143  0.8658625733 0.074557929  0.719731719 1.011993428
+42     Z.153  0.9055115820 0.070731914  0.766879578 1.044143586
+43    R.diag  0.9566077007 0.084420009  0.791147524 1.122067877
+44 R.offdiag  0.9496489628 0.084419815  0.784189166 1.115108760
+
+GLANCE:
+MARSSresiduals.tt1 reported warnings. See msg element of returned residuals object.
+     coef.det    sigma df   logLik       AIC      AICc convergence errors
+1 0.001083126 1.504435 44 762.2831 -1436.566 -1435.256          10      1
