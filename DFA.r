@@ -11,6 +11,8 @@
 #    can no longer halt the entire loop
 #  - Default MARSS plot() restricted to plot.type panels that don't
 #    call qqnorm() on possibly-empty/NA residual vectors
+#  - Added marginal "mean |value|" bar plots next to all three heatmaps
+#    (loadings, canonical correlations, cross-parameter trend correlations)
 #===================================================
 
 library(readr)
@@ -71,7 +73,7 @@ filter_value <- c("NW", "SW", "S")       # one or more values
 parameters_to_run <- NULL
 
 # Time aggregation
-time_agg <- "annual"   # "annual", "monthly", or "seasonal"
+time_agg <- "monthly"   # "annual", "monthly", or "seasonal"
 
 # Seasonal definition:
 # Winter = 1,2,3 ; Spring = 4,5,6 ; Summer = 7,8,9 ; Autumn = 10,11,12
@@ -110,7 +112,7 @@ prefer_nondegenerate <- TRUE
 # intervals (e.g. 0.05 = 95% CIs).
 alpha_sig <- 0.05
 
-results_dir <- "DFA_results"
+results_dir <- "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DFA_results"
 if(!dir.exists(results_dir)) dir.create(results_dir)
 
 #---------------------------------------------------
@@ -403,9 +405,62 @@ get_loadings <- function(fit){
   coef(fit, type = "matrix")$Z
 }
 
+# --- NEW: full-grid bar-chart helper -----------------------------------------
+# Renders EXACTLY the same (row, col, value) cells that a heatmap shows, but
+# as bars instead of colored tiles: one facet panel per `col_var` level,
+# with one bar per `row_var` level in that panel. `row_var` (series/zone) is
+# on the x-axis, `value_var` is on the y-axis (standard vertical bars) --
+# this is a direct alternate encoding of the heatmap data (not a
+# summary/aggregate of it): every cell in the heatmap has a corresponding
+# bar here. Bars are still fill-colored on the same diverging scale as the
+# heatmaps for visual continuity, and value/star labels are placed just
+# past each bar's tip. Row order is pinned via `row_levels` so panel-to-
+# panel and file-to-file comparisons stay consistent with the heatmap's
+# row order.
+plot_value_barplot <- function(df, row_var, col_var, value_var, label_var = NULL,
+                                title = NULL, subtitle = NULL,
+                                xlab = NULL, ylab = "Value",
+                                row_levels = NULL, ncol_facets = NULL){
+  
+  df2 <- df
+  if(!is.null(row_levels)){
+    df2[[row_var]] <- factor(as.character(df2[[row_var]]), levels = row_levels)
+  }
+  df2$.vjust <- ifelse(is.na(df2[[value_var]]) | df2[[value_var]] >= 0, -0.3, 1.3)
+  
+  rng <- range(df2[[value_var]], na.rm = TRUE)
+  if(!is.finite(rng[1]) || !is.finite(rng[2]) || diff(rng) == 0) rng <- c(-1, 1)
+  pad <- max(diff(rng) * 0.20, 0.05)
+  
+  p <- ggplot(df2, aes(x = .data[[row_var]], y = .data[[value_var]], fill = .data[[value_var]])) +
+    geom_col() +
+    geom_hline(yintercept = 0, color = "grey40", linewidth = 0.3)
+  
+  if(!is.null(label_var)){
+    p <- p + geom_text(aes(label = .data[[label_var]], vjust = .vjust), size = 2.6)
+  }
+  
+  p <- p +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b") +
+    facet_wrap(vars(.data[[col_var]]), ncol = ncol_facets) +
+    coord_cartesian(ylim = c(rng[1] - pad, rng[2] + pad)) +
+    labs(title = title, subtitle = subtitle, x = xlab, y = ylab) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "none",
+          strip.text = element_text(face = "bold"),
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+  
+  p
+}
+# ----------------------------------------------------------------------------
+
 plot_loadings <- function(Z, file_out, parameter_name, sig_stars = NULL){
+  row_levels <- rownames(Z)
+  if(is.null(row_levels)) row_levels <- paste0("series_", seq_len(nrow(Z)))
+  
   dfz <- as.data.frame(as.table(Z))
   names(dfz) <- c("Series", "Trend", "Loading")
+  dfz$Series <- factor(as.character(dfz$Series), levels = row_levels)
   dfz$Stars <- if(!is.null(sig_stars)) as.vector(sig_stars) else ""
   
   # FIX: previously only `Stars` was plotted as the text label. When
@@ -428,6 +483,28 @@ plot_loadings <- function(Z, file_out, parameter_name, sig_stars = NULL){
     theme_minimal(base_size = 11)
   
   ggsave(file_out, p, width = 8, height = 5, dpi = 300)
+  
+  # NEW: bar-chart version of the SAME data -- one facet per common trend,
+  # one bar per series, y = loading. Presents identical information to the
+  # heatmap above but as bars (magnitude/direction read directly off the
+  # axis) rather than tile color.
+  bar_file_out <- sub("\\.png$", "_barplot.png", file_out)
+  n_series <- nrow(Z); n_trend <- ncol(Z)
+  
+  tryCatch({
+    p_bar <- plot_value_barplot(
+      df = dfz, row_var = "Series", col_var = "Trend", value_var = "Loading",
+      label_var = "Label",
+      title = paste("Factor loadings (bar form) -", parameter_name),
+      subtitle = "* p<0.05, ** p<0.01, *** p<0.001 (or * if only CI, no SE, available)",
+      xlab = "Series", ylab = "Loading", row_levels = row_levels, ncol_facets = 1
+    )
+    ggsave(bar_file_out, p_bar, width = max(6, 0.6 * n_series + 2),
+           height = max(4, n_trend * 2.4), dpi = 300)
+  }, error = function(e){
+    cat("Skipping loadings bar-chart for", parameter_name, "- error:", conditionMessage(e), "\n")
+  })
+  
   p
 }
 
@@ -573,8 +650,12 @@ plot_canonical_correlations <- function(y, trends, file_out, parameter_name, alp
   stars[!is.na(pvals) & pvals >= 0.001 & pvals < 0.01]  <- "**"
   stars[!is.na(pvals) & pvals >= 0.01  & pvals < 0.05]  <- "*"
   
+  row_levels <- rownames(cors)
+  if(is.null(row_levels)) row_levels <- paste0("series_", seq_len(n_series))
+  
   dfc <- as.data.frame(as.table(cors))
   names(dfc) <- c("Series", "Trend", "Correlation")
+  dfc$Series <- factor(as.character(dfc$Series), levels = row_levels)
   dfc$Label <- paste0(round(dfc$Correlation, 2), as.vector(stars))
   
   p <- ggplot(dfc, aes(x = Trend, y = Series, fill = Correlation)) +
@@ -587,6 +668,26 @@ plot_canonical_correlations <- function(y, trends, file_out, parameter_name, alp
     theme_minimal(base_size = 11)
   
   ggsave(file_out, p, width = 8, height = 5, dpi = 300)
+  
+  # NEW: bar-chart version of the SAME correlation cells -- one facet per
+  # common trend, one bar per series, y = correlation (fixed to [-1, 1] via
+  # the shared range logic in plot_value_barplot, since correlations are
+  # already bounded).
+  bar_file_out <- sub("\\.png$", "_barplot.png", file_out)
+  
+  tryCatch({
+    p_bar <- plot_value_barplot(
+      df = dfc, row_var = "Series", col_var = "Trend", value_var = "Correlation",
+      label_var = "Label",
+      title = paste("Correlations: time series vs common trends (bar form) -", parameter_name),
+      subtitle = "* p<0.05, ** p<0.01, *** p<0.001",
+      xlab = "Time series", ylab = "Correlation", row_levels = row_levels, ncol_facets = 1
+    )
+    ggsave(bar_file_out, p_bar, width = max(6, 0.6 * n_series + 2),
+           height = max(4, n_trends * 2.4), dpi = 300)
+  }, error = function(e){
+    cat("Skipping canonical-correlations bar-chart for", parameter_name, "- error:", conditionMessage(e), "\n")
+  })
   
   out <- as.data.frame(as.table(cors))
   names(out) <- c("Series", "Trend", "Correlation")
@@ -1188,6 +1289,8 @@ if(length(trends_for_cross) >= 2){
     
     plot_df <- as.data.frame(as.table(cross_cors))
     names(plot_df) <- c("Trend_A", "Trend_B", "Correlation")
+    plot_df$Trend_A <- factor(as.character(plot_df$Trend_A), levels = trend_cols)
+    plot_df$Trend_B <- factor(as.character(plot_df$Trend_B), levels = trend_cols)
     plot_df$Label <- paste0(round(plot_df$Correlation, 2), as.vector(stars_mat))
     
     p <- ggplot(plot_df, aes(x = Trend_A, y = Trend_B, fill = Correlation)) +

@@ -6,6 +6,19 @@
 ## Each variable gets its own results folder "<variable>_results/"
 ## with the same STL/GESD, annual, breakpoint, seasonal, monthly,
 ## and DFA outputs as the original single-variable script.
+##
+## FIX (this version): only the three SUM-type metrics
+## (activity_degC_days_m2, number_of_events, sum_area_km2) are zero-filled
+## for months with no MHW event. The three MEAN-type metrics
+## (mean_intensity_degC, mean_duration_days, mean_area_km2) are left as NA
+## in those months, since they are conditional averages ("average
+## intensity/duration/area of events that occurred") and not totals -- a
+## month with no event has no such average to report, so it must be
+## excluded (na.rm = TRUE) rather than treated as a value of 0. Previously
+## all six variables were zero-filled, which biased every annual/seasonal/
+## monthly/STL summary of the three mean-type metrics toward 0 in years or
+## seasons with few event-months (e.g. mean_duration_days could appear
+## below its true floor of min_duration_mhw).
 ## ============================================================
 
 ## ---- Setup ----
@@ -27,6 +40,26 @@ tsdf <- function(timeseries, colname = "x") {
   out[c(colname, setdiff(names(out), colname))]
 }
 
+# For the three MEAN-type metrics, a period (month or year) with zero MHW
+# events is a genuine NA ("no events -> no average to report"), not a 0 --
+# see the note above data_wide. Most of the pipeline (mean(), lm(), and
+# Kendall::MannKendall()) already tolerates that NA correctly via internal
+# na.rm/na.omit handling. A few functions do NOT tolerate any NA at all --
+# stl(), trend::sens.slope(), and strucchange::breakpoints() -- and will
+# error out (na.fail) if given a series with gaps. For those specific
+# calls only, fill_gaps() linearly interpolates internal NA runs and
+# carries the nearest valid value out to the series edges, purely so the
+# function has a complete series to run on. This never touches the
+# NA-preserving data written to CSV or drawn in geom_line() plots -- those
+# correctly show the true gap.
+fill_gaps <- function(x) {
+  if (!anyNA(x)) return(x)
+  x %>%
+    zoo::na.approx(na.rm = FALSE) %>%
+    zoo::na.locf(na.rm = FALSE) %>%
+    zoo::na.locf(fromLast = TRUE, na.rm = FALSE)
+}
+
 theme_data <- theme_minimal(base_size = 11) +
   theme(
     strip.background = element_rect(fill = "grey92", color = NA),
@@ -44,52 +77,82 @@ linear_label <- function(model) {
           signif(co[2], 3), signif(s$r.squared, 3), signif(s$coefficients[2, 4], 3))
 }
 
-## ---- Load data (once, all variables) ----
-# >>> EDIT THIS if the CSV is not in the same folder <<<
-data_file <- "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/801_1000m/MHW_summary_table_long_oisst.19812025.Portugal_1000m_bathymetry.csv"
-stopifnot(file.exists(data_file))
+## ---- Load data (once per bathymetry file) ----
+# >>> EDIT THIS: list every bathymetry CSV you want processed in this run.
+# Each file gets its own results folder (named after the bathymetry depth
+# detected in its filename) under output_base_dir. Add or remove paths as
+# needed -- everything below runs once per entry in this vector.
+data_files <- c(
+  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_1000m_bathymetry.csv"
+  # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_200m_bathymetry.csv"
+  # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_500m_bathymetry.csv"
+)
+stopifnot(all(file.exists(data_files)))
 
-raw <- read_csv(data_file, show_col_types = FALSE)
-stopifnot(all(c("Year", "Month", "Zone", "Parameter", "Value") %in% names(raw)))
+# Only the three SUM-type event-summary metrics are zero-filled for months
+# with no MHW event: a month with no event genuinely contributed 0 total
+# activity, 0 events, and 0 km^2 of area, so 0 is the correct value there.
+#
+# The three MEAN-type metrics (mean_intensity_degC, mean_duration_days,
+# mean_area_km2) are deliberately left as NA in months with no event: they
+# are conditional averages ("average intensity/duration/area of the events
+# that occurred"), not totals, so a month with no event has no such value
+# to report. na.rm = TRUE in every downstream summarise()/mean() call then
+# correctly excludes those months instead of treating them as 0.
+sum_type_vars  <- c("activity_degC_days_m2", "number_of_events", "sum_area_km2")
+mean_type_vars <- c("mean_intensity_degC", "mean_duration_days", "mean_area_km2")
 
-# Pull the bathymetry depth out of the filename (e.g. "...1000m_bathymetry.csv"
-# -> "1000m") so results from different bathymetry cutoffs land in separate
-# folders instead of overwriting each other. Falls back to "unknown_depth"
-# if the filename doesn't follow the expected "<depth>m_bathymetry" pattern.
-bathymetry_tag <- str_extract(data_file, "\\d+m(?=_bathymetry)")
-if (is.na(bathymetry_tag)) bathymetry_tag <- "unknown_depth"
-message("Bathymetry tag detected: ", bathymetry_tag)
+# >>> EDIT THIS to control where every results_dir/ folder is created <<<
+# All output (CSVs and PNGs) is written under:
+#   <output_base_dir>/<bathymetry_tag>/<variable>_results/
+# One subfolder per bathymetry file in data_files above. Absolute path so
+# output always lands in the same place regardless of the R session's
+# working directory (getwd()).
+output_base_dir <- "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/TSA results"
+if (!dir.exists(output_base_dir)) dir.create(output_base_dir, recursive = TRUE)
+message("Output base directory: ", normalizePath(output_base_dir))
 
-raw <- raw %>%
-  mutate(
-    Zone = factor(Zone, levels = c("NW", "SW", "S")),
-    date = as.Date(sprintf("%d-%02d-01", Year, Month)),
-    month_name = factor(month.abb[Month], levels = month.abb),
-    season = factor(
-      case_when(
-        Month %in% c(12, 1, 2)  ~ "DJF",
-        Month %in% c(3, 4, 5)   ~ "MAM",
-        Month %in% c(6, 7, 8)   ~ "JJA",
-        Month %in% c(9, 10, 11) ~ "SON"
-      ),
-      levels = c("DJF", "MAM", "JJA", "SON")
+# Loads and prepares one bathymetry CSV. Returns a list with the prepared
+# data_wide tibble and the bathymetry_tag detected from its filename.
+load_bathymetry_file <- function(data_file) {
+  raw <- read_csv(data_file, show_col_types = FALSE)
+  stopifnot(all(c("Year", "Month", "Zone", "Parameter", "Value") %in% names(raw)))
+
+  # Pull the bathymetry depth out of the filename (e.g. "...1000m_bathymetry.csv"
+  # -> "1000m") so results from different bathymetry cutoffs land in separate
+  # folders instead of overwriting each other. Falls back to "unknown_depth"
+  # if the filename doesn't follow the expected "<depth>m_bathymetry" pattern.
+  bathymetry_tag <- str_extract(data_file, "\\d+m(?=_bathymetry)")
+  if (is.na(bathymetry_tag)) bathymetry_tag <- "unknown_depth"
+  message("Bathymetry tag detected: ", bathymetry_tag, "  (", basename(data_file), ")")
+
+  raw <- raw %>%
+    mutate(
+      Zone = factor(Zone, levels = c("NW", "SW", "S")),
+      date = as.Date(sprintf("%d-%02d-01", Year, Month)),
+      month_name = factor(month.abb[Month], levels = month.abb),
+      season = factor(
+        case_when(
+          Month %in% c(12, 1, 2)  ~ "DJF",
+          Month %in% c(3, 4, 5)   ~ "MAM",
+          Month %in% c(6, 7, 8)   ~ "JJA",
+          Month %in% c(9, 10, 11) ~ "SON"
+        ),
+        levels = c("DJF", "MAM", "JJA", "SON")
+      )
     )
-  )
 
-# All 6 event-summary metrics are NA in months with no MHW event, so NA
-# is filled with 0 (not dropped) for every one of them. This is the same
-# treatment the original script applied only to activity_degC_days_m2.
-data_wide <- raw %>%
-  select(Year, Month, date, month_name, season, Zone, Parameter, Value) %>%
-  pivot_wider(names_from = Parameter, values_from = Value) %>%
-  arrange(Zone, date) %>%
-  mutate(
-    across(
-      c(activity_degC_days_m2, number_of_events, sum_area_km2,
-        mean_intensity_degC, mean_duration_days, mean_area_km2),
-      ~ replace_na(.x, 0)
+  data_wide <- raw %>%
+    select(Year, Month, date, month_name, season, Zone, Parameter, Value) %>%
+    pivot_wider(names_from = Parameter, values_from = Value) %>%
+    arrange(Zone, date) %>%
+    mutate(
+      across(all_of(sum_type_vars), ~ replace_na(.x, 0))
+      # mean_type_vars are intentionally NOT zero-filled here -- see note above.
     )
-  )
+
+  list(data_wide = data_wide, bathymetry_tag = bathymetry_tag)
+}
 
 ## ---- Variable configuration ----
 ## agg_fun: how to aggregate the monthly value into an annual/seasonal/
@@ -103,7 +166,7 @@ all_variables <- c(
 )
 
 agg_fun_for <- function(var) {
-  if (var %in% c("activity_degC_days_m2", "number_of_events", "sum_area_km2")) "sum" else "mean"
+  if (var %in% sum_type_vars) "sum" else "mean"
 }
 
 y_label_for <- function(var) {
@@ -139,7 +202,7 @@ analyse_variable <- function(var) {
   agg_fun     <- agg_fun_for(var)
   y_lab       <- y_label_for(var)
   disp_name   <- display_name_for(var)
-  results_dir <- file.path(bathymetry_tag, paste0(var, "_results"))
+  results_dir <- file.path(output_base_dir, bathymetry_tag, paste0(var, "_results"))
   if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE)
 
   # Generic working frame: rename target column to "value" so the rest of
@@ -147,9 +210,16 @@ analyse_variable <- function(var) {
   dw <- data_wide %>% rename(value = all_of(var))
 
   ## ---- STL decomposition + GESD anomaly detection ----
+  ## NOTE: for the three mean-type variables, `value` may now contain NA
+  ## in months with no event (see fix above). ts() will carry these NAs
+  ## through, and stl() requires a series with no NAs. We linearly
+  ## interpolate purely for the purposes of STL/anomaly detection (a
+  ## smooth trend/seasonal decomposition needs a continuous series) while
+  ## all other outputs (annual, seasonal, monthly summaries) continue to
+  ## use na.rm = TRUE on the original NA-preserving data.
   run_stl_for_zone <- function(zone) {
     df_zone <- dw %>% filter(Zone == zone) %>% arrange(date)
-    ts_zone <- ts(df_zone$value,
+    ts_zone <- ts(fill_gaps(df_zone$value),
                   start = c(df_zone$Year[1], df_zone$Month[1]), frequency = 12)
 
     ts_zone %>%
@@ -206,12 +276,15 @@ analyse_variable <- function(var) {
   annual_trend_tests <- data_annual %>%
     group_by(Zone) %>%
     summarise(
-      lm_slope  = coef(lm(value_annual ~ Year))[2],
+      # Years the mean-type metrics had zero events all year (true NA,
+      # gap-filled below only for the tests that require a complete series).
+      n_years_no_events = sum(is.na(value_annual)),
+      lm_slope  = coef(lm(value_annual ~ Year))[2],           # lm() drops NA rows on its own
       lm_p      = summary(lm(value_annual ~ Year))$coefficients[2, 4],
       lm_r2     = summary(lm(value_annual ~ Year))$r.squared,
-      mk_tau    = Kendall::MannKendall(value_annual)$tau,
+      mk_tau    = Kendall::MannKendall(value_annual)$tau,     # MannKendall() tolerates NA on its own
       mk_p      = Kendall::MannKendall(value_annual)$sl,
-      sen_slope = trend::sens.slope(value_annual)$estimates,
+      sen_slope = trend::sens.slope(fill_gaps(value_annual))$estimates,  # sens.slope() has no NA tolerance
       .groups = "drop"
     )
   write_csv(annual_trend_tests, file.path(results_dir, paste0(var, "_annual_trend_tests.csv")))
@@ -233,7 +306,10 @@ analyse_variable <- function(var) {
 
   find_breaks <- function(zone) {
     df_zone <- data_annual %>% filter(Zone == zone) %>% arrange(Year)
-    ts_zone <- ts(df_zone$value_annual, start = min(df_zone$Year), frequency = 1)
+    # breakpoints() has no NA tolerance (like sens.slope above), so feed it
+    # the gap-filled series; the years/values plotted below still come from
+    # the real, NA-preserving df_zone$value_annual.
+    ts_zone <- ts(fill_gaps(df_zone$value_annual), start = min(df_zone$Year), frequency = 1)
     bp <- tryCatch(strucchange::breakpoints(ts_zone ~ 1), error = function(e) NULL)
 
     out <- tibble(Year = df_zone$Year, value = df_zone$value_annual, Zone = zone, breakpoint = FALSE)
@@ -251,8 +327,8 @@ analyse_variable <- function(var) {
     geom_line(color = "grey60") +
     geom_vline(data = filter(data_bp, breakpoint), aes(xintercept = Year),
                color = "firebrick", linetype = "dashed") +
-    geom_text(data = filter(data_bp, breakpoint), aes(x = Year, y = max(data_bp$value), label = Year),
-              angle = 90, vjust = -0.4, hjust = 1, size = 3, color = "firebrick") +
+    geom_text(data = filter(data_bp, breakpoint), aes(x = Year, label = Year),
+              y = Inf, angle = 90, vjust = -0.4, hjust = 1.1, size = 3, color = "firebrick") +
     facet_grid(Zone ~ ., scales = "free_y") +
     labs(title = paste0("Trend changes / breakpoints — ", disp_name), x = NULL, y = y_lab)
   print(bp_plot)
@@ -383,9 +459,15 @@ analyse_variable <- function(var) {
   invisible(NULL)
 }
 
-## ---- Run for every variable ----
-for (v in all_variables) {
-  analyse_variable(v)
+## ---- Run for every bathymetry file, and every variable within it ----
+for (data_file in data_files) {
+  loaded <- load_bathymetry_file(data_file)
+  data_wide      <- loaded$data_wide       # read by analyse_variable() below
+  bathymetry_tag <- loaded$bathymetry_tag  # read by analyse_variable() below
+
+  for (v in all_variables) {
+    analyse_variable(v)
+  }
 }
 
 ## ---- Done ----
