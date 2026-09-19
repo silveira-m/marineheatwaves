@@ -73,7 +73,7 @@ filter_value <- c("NW", "SW", "S")       # one or more values
 parameters_to_run <- NULL
 
 # Time aggregation
-time_agg <- "monthly"   # "annual", "monthly", or "seasonal"
+time_agg <- "annual"   # "annual", "monthly", or "seasonal"
 
 # Seasonal definition:
 # Winter = 1,2,3 ; Spring = 4,5,6 ; Summer = 7,8,9 ; Autumn = 10,11,12

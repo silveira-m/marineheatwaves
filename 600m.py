@@ -140,18 +140,18 @@ if import_data == 'y':
 
     sst_full.isel(time=0).plot()
     plt.title("Full domain SST (t=0)")
-    #plt.show()
+    ##plt.show()
 
     zone_mask_2d.plot()
     plt.title("Zone index mask")
-    #plt.show()
+    ##plt.show()
 
 mask_ocean = 1 * np.ones(sst_full.shape[1:]) * np.isfinite(sst_full.isel(time=0))
 mask_land = 0 * np.ones(sst_full.shape[1:]) * np.isnan(sst_full.isel(time=0))
 mask_full = mask_ocean + mask_land
 mask_full.plot()
 plt.title("Land/ocean mask")
-#plt.show()
+##plt.show()
 
 if choice_date == 1:
     print("choice_date")
@@ -238,23 +238,33 @@ def build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zo
         ev["Year"] = ev["start_time"].dt.year
         ev["Month"] = ev["start_time"].dt.month
 
-        n_events = ev.groupby(["Year", "Month"]).size()
+        # 1) count events per grid cell, per Year/Month
+        events_per_cell = ev.groupby(["Year", "Month", "lat", "lon"]).size()
+                
+        # 2) average that count across all grid cells in the zone
+        mean_n_events = events_per_cell.groupby(["Year", "Month"]).mean()
+                
         mean_duration = ev.groupby(["Year", "Month"])["duration"].mean()
-        mean_area = ev.groupby(["Year", "Month"])["area"].mean() / 1e6   # m2 -> km2
-        sum_area = ev.groupby(["Year", "Month"])["area"].sum() / 1e6     # m2 -> km2
+        mean_area = ev.groupby(["Year", "Month"])["area"].mean() / 1e6
+        sum_area = ev.groupby(["Year", "Month"])["area"].sum() / 1e6
 
+        n_events = ev.groupby(["Year", "Month"]).size()
         for (yr, mo), val in n_events.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "number_of_events", "Value": val})
+                    rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
+                                 "Parameter": "number_of_events", "Value": val})
+                
+        for (yr, mo), val in mean_n_events.items():
+                        rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
+                                     "Parameter": "mean_n_events", "Value": val})
         for (yr, mo), val in mean_duration.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "mean_duration_days", "Value": val})
+                            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
+                                         "Parameter": "mean_duration_days", "Value": val})
         for (yr, mo), val in mean_area.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "mean_area_km2", "Value": val})
+                            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
+                                         "Parameter": "mean_area_km2", "Value": val})
         for (yr, mo), val in sum_area.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "sum_area_km2", "Value": val})
+                            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
+                                         "Parameter": "sum_area_km2", "Value": val})
 
     return pd.DataFrame(rows)
 
@@ -379,7 +389,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     plt.xticks(fontsize=size_fonte)
     plt.yticks(fontsize=size_fonte)
     plt.grid(True)
-    #plt.show()
+    ##plt.show()
 
     # ---- MHW features (event table) ----
     events_count = xr.DataArray(
@@ -440,7 +450,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     plt.xticks(fontsize=size_fonte)
     plt.yticks(fontsize=size_fonte)
     plt.grid(True)
-    #plt.show()
+    ##plt.show()
 
     # ---- map: number of events per year ----
     min_value_leg = 0
@@ -468,7 +478,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
         cbar.set_label('Number of events', fontsize=12)
     fig.suptitle(f'MHW number of events, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
                  f'from {yearbeg} to {yearend}', fontsize=12)
-    #plt.show()
+    ##plt.show()
 
     # ---- duration ----
     print("TIME PLOT - DURATION", (time.time() - start_time_script) / 60)
@@ -479,7 +489,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     plt.ylabel("Mean Duration (days)", fontsize=size_fonte)
     plt.title(f"Zone {zone_label} - {start_day}/{start_mth} to {end_day}/{end_mth}", fontsize=size_fonte)
     plt.grid(True)
-    #plt.show()
+    ##plt.show()
 
     min_value_leg = 0
     max_value_leg = 60
@@ -510,7 +520,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     if im is not None:
         fig.colorbar(im, cax=cbar_ax, orientation='horizontal')
         cbar_ax.set_xlabel('days', fontsize=12)
-    #plt.show()
+    ##plt.show()
 
     # ---- area ----
     print("TIME PLOT - AREA", (time.time() - start_time_script) / 60)
@@ -522,14 +532,14 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     plt.ylabel("Mean area (km²)", fontsize=size_fonte)
     plt.title(f"Zone {zone_label} - {start_day}/{start_mth} to {end_day}/{end_mth}", fontsize=size_fonte)
     plt.grid(True)
-    #plt.show()
+    ##plt.show()
 
     plt.figure(figsize=(7, 4))
     plt.plot(area_per_year_sum.index, area_per_year_sum.values / 1e6, c='red', marker='o')
     plt.ylabel("Sum area (km2)", fontsize=size_fonte)
     plt.title(f"Zone {zone_label} - {start_day}/{start_mth} to {end_day}/{end_mth}", fontsize=size_fonte)
     plt.grid(True)
-    #plt.show()
+    ##plt.show()
 
     fig, axes = make_iberia_map_grid(nrows, ncols, figsize=(ncols * 3, nrows * 2.5))
     da_plot = None
@@ -560,7 +570,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
         cbar_ax.set_ylabel('')
     fig.suptitle(f'MHW area, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
                  f'from {yearbeg} to {yearend}', fontsize=12)
-    #plt.show()
+    ##plt.show()
 
     # ---- activity ----
     print("TIME PLOT - ACTIVITY", (time.time() - start_time_script) / 60)
@@ -581,7 +591,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     plt.xticks(fontsize=size_fonte)
     plt.yticks(fontsize=size_fonte)
     plt.grid(True)
-    #plt.show()
+    ##plt.show()
 
     min_value_leg = 0
     max_value_leg = 2e11
@@ -607,7 +617,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
         cbar_ax.set_ylabel('')
     fig.suptitle(f'MHW Activity, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
                  f'from {yearbeg} to {yearend}', fontsize=12)
-    #plt.show()
+    ##plt.show()
 
     summary_df = build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label)
 

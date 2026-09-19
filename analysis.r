@@ -19,6 +19,12 @@
 ## monthly/STL summary of the three mean-type metrics toward 0 in years or
 ## seasons with few event-months (e.g. mean_duration_days could appear
 ## below its true floor of min_duration_mhw).
+##
+## FIX 2 (this version): plot titles now include the bathymetry tag (e.g.
+## "1000m") alongside the variable's display name, so exported PNGs remain
+## self-identifying when compared or shared outside their results folder.
+## This only affects labs(title = ...) strings -- axis labels, filenames,
+## and CSV outputs are unchanged.
 ## ============================================================
 
 ## ---- Setup ----
@@ -83,7 +89,7 @@ linear_label <- function(model) {
 # detected in its filename) under output_base_dir. Add or remove paths as
 # needed -- everything below runs once per entry in this vector.
 data_files <- c(
-  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_1000m_bathymetry.csv"
+  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_200m_bathymetry.csv"
   # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_200m_bathymetry.csv"
   # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_500m_bathymetry.csv"
 )
@@ -202,6 +208,11 @@ analyse_variable <- function(var) {
   agg_fun     <- agg_fun_for(var)
   y_lab       <- y_label_for(var)
   disp_name   <- display_name_for(var)
+  # Bathymetry-qualified display name used ONLY in plot titles (labs(title=...))
+  # below, so exported PNGs stay self-identifying when viewed outside their
+  # <bathymetry_tag>/<variable>_results/ folder. Axis labels, filenames, and
+  # CSV outputs intentionally continue to use the plain disp_name/var.
+  disp_name_full <- paste0(disp_name, " (", bathymetry_tag, ")")
   results_dir <- file.path(output_base_dir, bathymetry_tag, paste0(var, "_results"))
   if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE)
 
@@ -247,7 +258,7 @@ analyse_variable <- function(var) {
                shape = 21, size = 2.5, fill = "white") +
     facet_grid2(component ~ Zone, scales = "free_y", independent = "y") +
     scale_color_manual(values = palette_zone) +
-    labs(title = paste0("Observed ", disp_name, " & anomalies"), x = NULL, y = y_lab) +
+    labs(title = paste0("Observed ", disp_name_full, " & anomalies"), x = NULL, y = y_lab) +
     theme(legend.position = "none")
 
   decomp_panel <- ggplot(filter(plot_stl, component != "observed"), aes(x, val, color = Zone)) +
@@ -297,7 +308,7 @@ analyse_variable <- function(var) {
     facet_grid(Zone ~ ., scales = "free_y") +
     scale_color_manual(values = palette_zone) +
     scale_fill_manual(values = palette_zone) +
-    labs(title = paste0("Annual ", ifelse(agg_fun == "sum", "total ", "mean "), disp_name),
+    labs(title = paste0("Annual ", ifelse(agg_fun == "sum", "total ", "mean "), disp_name_full),
          x = NULL, y = y_lab) +
     theme(legend.position = "none")
   print(annual_plot)
@@ -330,7 +341,7 @@ analyse_variable <- function(var) {
     geom_text(data = filter(data_bp, breakpoint), aes(x = Year, label = Year),
               y = Inf, angle = 90, vjust = -0.4, hjust = 1.1, size = 3, color = "firebrick") +
     facet_grid(Zone ~ ., scales = "free_y") +
-    labs(title = paste0("Trend changes / breakpoints — ", disp_name), x = NULL, y = y_lab)
+    labs(title = paste0("Trend changes / breakpoints — ", disp_name_full), x = NULL, y = y_lab)
   print(bp_plot)
   ggsave(file.path(results_dir, paste0(var, "_annual_breakpoints.png")), bp_plot,
          width = 150, height = 170, units = "mm", dpi = 400)
@@ -358,7 +369,7 @@ analyse_variable <- function(var) {
     geom_boxplot() +
     facet_grid(Zone ~ .) +
     scale_color_manual(values = palette_zone) +
-    labs(title = paste0("Seasonal distribution of monthly ", disp_name), x = NULL, y = y_lab) +
+    labs(title = paste0("Seasonal distribution of monthly ", disp_name_full), x = NULL, y = y_lab) +
     theme(legend.position = "none")
 
   seasonal_trend_plot <- ggplot(data_seasonal, aes(Year, value_mean, color = Zone, fill = Zone)) +
@@ -367,7 +378,7 @@ analyse_variable <- function(var) {
     facet_grid(Zone ~ season, scales = "free_y") +
     scale_color_manual(values = palette_zone) +
     scale_fill_manual(values = palette_zone) +
-    labs(title = paste0("Seasonal trends — ", disp_name), x = NULL, y = y_lab) +
+    labs(title = paste0("Seasonal trends — ", disp_name_full), x = NULL, y = y_lab) +
     theme(legend.position = "none")
 
   print(seasonal_box)
@@ -395,14 +406,14 @@ analyse_variable <- function(var) {
     geom_line() +
     geom_point() +
     scale_color_manual(values = palette_zone) +
-    labs(title = paste0("Monthly climatology — ", disp_name), x = NULL, y = y_lab, color = "Zone") +
+    labs(title = paste0("Monthly climatology — ", disp_name_full), x = NULL, y = y_lab, color = "Zone") +
     theme(axis.text.x = element_text(angle = 90))
 
   monthly_box <- ggplot(dw, aes(month_name, value, color = Zone)) +
     geom_boxplot(outlier.size = 0.7) +
     facet_grid(Zone ~ .) +
     scale_color_manual(values = palette_zone) +
-    labs(title = paste0("Monthly means — ", disp_name), x = NULL, y = y_lab) +
+    labs(title = paste0("Monthly means — ", disp_name_full), x = NULL, y = y_lab) +
     theme(legend.position = "none", axis.text.x = element_text(angle = 90))
 
   monthly_combo <- plot_grid(monthly_box, monthly_climatology, rel_widths = c(2, 1.3), nrow = 1)
@@ -445,7 +456,7 @@ analyse_variable <- function(var) {
 
   dfa_plot <- ggplot(trends_est, aes(Year, trend_value, color = trend)) +
     geom_line(linewidth = 1) +
-    labs(title = paste0(disp_name, " — MARSS/DFA common trend(s), best model m = ", best_dfa$call$model$m),
+    labs(title = paste0(disp_name_full, " — MARSS/DFA common trend(s), best model m = ", best_dfa$call$model$m),
          x = NULL, y = "Trend (standardized units)")
   print(dfa_plot)
   ggsave(file.path(results_dir, paste0(var, "_dfa.png")), dfa_plot,
