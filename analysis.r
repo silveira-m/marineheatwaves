@@ -89,7 +89,7 @@ linear_label <- function(model) {
 # detected in its filename) under output_base_dir. Add or remove paths as
 # needed -- everything below runs once per entry in this vector.
 data_files <- c(
-  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_200m_bathymetry.csv"
+  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_1000m_bathymetry.csv"
   # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_200m_bathymetry.csv"
   # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_500m_bathymetry.csv"
 )
@@ -106,7 +106,7 @@ stopifnot(all(file.exists(data_files)))
 # to report. na.rm = TRUE in every downstream summarise()/mean() call then
 # correctly excludes those months instead of treating them as 0.
 sum_type_vars  <- c("activity_degC_days_m2", "number_of_events", "sum_area_km2")
-mean_type_vars <- c("mean_intensity_degC", "mean_duration_days", "mean_area_km2")
+mean_type_vars <- c("mean_intensity_degC", "mean_duration_days", "mean_area_km2", "mean_n_events")
 
 # >>> EDIT THIS to control where every results_dir/ folder is created <<<
 # All output (CSVs and PNGs) is written under:
@@ -168,7 +168,8 @@ load_bathymetry_file <- function(data_file) {
 ##   physically meaningful.
 all_variables <- c(
   "activity_degC_days_m2", "number_of_events", "sum_area_km2",
-  "mean_intensity_degC", "mean_duration_days", "mean_area_km2"
+  "mean_intensity_degC", "mean_duration_days", "mean_area_km2",
+  "mean_n_events"
 )
 
 agg_fun_for <- function(var) {
@@ -182,7 +183,8 @@ y_label_for <- function(var) {
     "sum_area_km2"          = expression(Total~area~(km^2)),
     "mean_intensity_degC"   = expression(Mean~intensity~(degree*C)),
     "mean_duration_days"    = "Mean duration (days)",
-    "mean_area_km2"         = expression(Mean~area~(km^2))
+    "mean_area_km2"         = expression(Mean~area~(km^2)),
+    "mean_n_events"         = "Mean number of events"
   )
 }
 
@@ -193,7 +195,8 @@ display_name_for <- function(var) {
     "sum_area_km2"          = "MHW Total Area",
     "mean_intensity_degC"   = "MHW Mean Intensity",
     "mean_duration_days"    = "MHW Mean Duration",
-    "mean_area_km2"         = "MHW Mean Area"
+    "mean_area_km2"         = "MHW Mean Area",
+    "mean_n_events"         = "MHW Mean Number of Events"
   )
 }
 

@@ -1,6 +1,9 @@
 import time
 start_time_script = time.time()
 
+import warnings
+warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+
 import xarray as xr
 import dask.array as da
 import numpy as np
@@ -87,8 +90,8 @@ if import_data == 'y':
         mask_region = np.load(f'{pathdata}/OceanMasks_oisst_{region}.npy')
         if model != 'oisst':
             mask_interp = xr.DataArray(mask_region,
-                                        dims=('lat', 'lon'),
-                                        coords={'lat': ds['lat'].values, 'lon': ds['lon'].values})
+                                       dims=('lat', 'lon'),
+                                       coords={'lat': ds['lat'].values, 'lon': ds['lon'].values})
             mask_region = mask_interp.interp(lat=ds.lat, lon=ds.lon, method='nearest')
         print("mask_region", mask_region)
         print("np.shape(mask_region)", np.shape(mask_region))
@@ -96,15 +99,14 @@ if import_data == 'y':
 
     # --------------------------------------------------------
     # ZONES: load shapefile and KEEP the 3 polygons separate
-    # (previously this did unary_union to merge them into one)
     # --------------------------------------------------------
-    shp_path = "200m"   # <- change this
+    shp_path = "200m/200m.shp"   # <- change this
     gdf = gpd.read_file(shp_path)
 
     if gdf.crs and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(epsg=4326)
 
-    # <<< If the automatic north->south sort below mislabels a zone, set this
+    # If the automatic north->south sort below mislabels a zone, set this
     # to a 3-item list matching the RAW row order printed just below
     # (e.g. ["NW", "S", "SW"]), and it will be used instead of auto-sorting.
     ZONE_LABELS_OVERRIDE = None
@@ -132,7 +134,7 @@ if import_data == 'y':
     # regionmask needs a GeoDataFrame with one row per region
     regions = regionmask.from_geopandas(gdf_sorted, names="zone_label")
 
-    # 2D mask: each cell gets the *index* (0,1,2,...) of the zone it falls
+    # 2D mask: each cell gets the index (0,1,2,...) of the zone it falls
     # in, or NaN if it's outside every zone. Index order matches gdf_sorted.
     zone_mask_2d = regions.mask(sst_full.lon, sst_full.lat)
 
@@ -170,9 +172,6 @@ year_range = range(yearbeg, yearend + 1)
 # ============================================================
 # Iberian Peninsula basemap helper
 # ============================================================
-# lon_min, lon_max, lat_min, lat_max -- adjust if your zones extend
-# outside this box (e.g. widen lon_min if you need more of Spain's
-# Atlantic coast, or narrow it if you only need Portugal's west coast).
 IBERIA_EXTENT = [-11.0, -5.5, 35.8, 44.0]
 
 
@@ -183,7 +182,7 @@ def make_iberia_map_grid(nrows, ncols, figsize):
     Returns (fig, flattened_axes_array).
     """
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize,
-                              subplot_kw={'projection': ccrs.PlateCarree()})
+                             subplot_kw={'projection': ccrs.PlateCarree()})
     axes = np.atleast_1d(axes).flatten()
     for ax in axes:
         ax.set_extent(IBERIA_EXTENT, crs=ccrs.PlateCarree())
@@ -193,94 +192,157 @@ def make_iberia_map_grid(nrows, ncols, figsize):
     return fig, axes
 
 
+# ============================================================
+# Summary tables (one per zone)
+# ============================================================
+def _rows_from_series(rows, series_list, zone_label, monthly):
+    """Append (Year[, Month], Zone, Parameter, Value) rows from a list of
+    (parameter_name, pandas Series) pairs."""
+    for name, series in series_list:
+        for key, val in series.items():
+            if monthly:
+                yr, mo = key
+                rows.append({"Year": int(yr), "Month": int(mo), "Zone": zone_label,
+                             "Parameter": name, "Value": val})
+            else:
+                rows.append({"Year": int(key), "Zone": zone_label,
+                             "Parameter": name, "Value": val})
+
+
+def build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells):
+    """
+    MONTHLY summary table for one zone (used by the R time-series analysis):
+    Year | Month | Zone | Parameter | Value
+
+    - Count/total metrics (number_of_events, mean_n_events, sum_area_km2,
+      activity) are 0 in months without events.
+    - Conditional averages (mean_intensity_degC, mean_duration_days,
+      mean_area_km2) are NaN in months without events.
+    - mean_n_events = events starting in the month / ALL ocean cells in the zone.
+    """
+    rows = []
+
+    t = mhw_meanintensity_filtered.time.to_index()
+    all_months = pd.MultiIndex.from_arrays([t.year, t.month], names=["Year", "Month"]).unique()
+
+    # ---- Field-based: mean intensity ----
+    intensity_da = mhw_meanintensity_filtered.where(mhw_meanintensity_filtered != 0)
+    intensity_ts = intensity_da.mean(dim=('lat', 'lon'), skipna=True).to_series()
+    intensity_monthly = intensity_ts.groupby([intensity_ts.index.year, intensity_ts.index.month]).mean()
+    intensity_monthly.index.names = ["Year", "Month"]
+    intensity_monthly = intensity_monthly.reindex(all_months)
+
+    # ---- Field-based: activity (intensity x cell area, summed over the month) ----
+    activity_da = mhw_meanintensity_filtered.fillna(0) * cell_area
+    activity_ts = activity_da.sum(dim=('lat', 'lon'), skipna=True).to_series()
+    activity_monthly = activity_ts.groupby([activity_ts.index.year, activity_ts.index.month]).sum()
+    activity_monthly.index.names = ["Year", "Month"]
+    activity_monthly = activity_monthly.reindex(all_months, fill_value=0)
+
+    # ---- Event-based ----
+    if event_df.empty:
+        n_events = pd.Series(0, index=all_months)
+        mean_duration = pd.Series(np.nan, index=all_months)
+        mean_area = pd.Series(np.nan, index=all_months)
+        sum_area = pd.Series(0.0, index=all_months)
+    else:
+        ev = event_df.copy()
+        ev["start_time"] = pd.to_datetime(ev["start_time"])
+        ev["Year"] = ev["start_time"].dt.year
+        ev["Month"] = ev["start_time"].dt.month
+        g = ev.groupby(["Year", "Month"])
+
+        n_events = g.size().reindex(all_months, fill_value=0)
+        mean_duration = g["duration"].mean().reindex(all_months)              # NaN when no events
+        mean_area = (g["area"].mean() / 1e6).reindex(all_months)              # NaN when no events
+        sum_area = (g["area"].sum() / 1e6).reindex(all_months, fill_value=0)
+
+    mean_n_events = n_events / n_cells
+
+    _rows_from_series(rows, [
+        ("mean_intensity_degC", intensity_monthly),
+        ("activity_degC_days_m2", activity_monthly),
+        ("number_of_events", n_events),
+        ("mean_n_events", mean_n_events),
+        ("mean_duration_days", mean_duration),
+        ("mean_area_km2", mean_area),
+        ("sum_area_km2", sum_area),
+    ], zone_label, monthly=True)
+
+    return pd.DataFrame(rows)
+
+
+def build_zone_year_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells):
+    """
+    ANNUAL summary table for one zone (used by the half-decade bar plots):
+    Year | Zone | Parameter | Value
+    Same conventions as the monthly table, aggregated per calendar year.
+    """
+    rows = []
+
+    t = mhw_meanintensity_filtered.time.to_index()
+    all_years = pd.Index(t.year.unique(), name="Year")
+
+    # ---- Field-based: mean intensity (mean over all MHW days and cells in the year) ----
+    intensity_da = mhw_meanintensity_filtered.where(mhw_meanintensity_filtered != 0)
+    intensity_ts = intensity_da.mean(dim=('lat', 'lon'), skipna=True).to_series()
+    intensity_yearly = intensity_ts.groupby(intensity_ts.index.year).mean().reindex(all_years)
+
+    # ---- Field-based: activity (intensity x cell area, summed over the year) ----
+    activity_da = mhw_meanintensity_filtered.fillna(0) * cell_area
+    activity_ts = activity_da.sum(dim=('lat', 'lon'), skipna=True).to_series()
+    activity_yearly = activity_ts.groupby(activity_ts.index.year).sum().reindex(all_years, fill_value=0)
+
+    # ---- Event-based ----
+    if event_df.empty:
+        n_events = pd.Series(0, index=all_years)
+        mean_duration = pd.Series(np.nan, index=all_years)
+        mean_area = pd.Series(np.nan, index=all_years)
+        sum_area = pd.Series(0.0, index=all_years)
+    else:
+        ev = event_df.copy()
+        ev["Year"] = pd.to_datetime(ev["start_time"]).dt.year
+        g = ev.groupby("Year")
+
+        n_events = g.size().reindex(all_years, fill_value=0)
+        mean_duration = g["duration"].mean().reindex(all_years)              # NaN when no events
+        mean_area = (g["area"].mean() / 1e6).reindex(all_years)              # NaN when no events
+        sum_area = (g["area"].sum() / 1e6).reindex(all_years, fill_value=0)
+
+    mean_n_events = n_events / n_cells
+
+    _rows_from_series(rows, [
+        ("mean_intensity_degC", intensity_yearly),
+        ("activity_degC_days_m2", activity_yearly),
+        ("number_of_events", n_events),
+        ("mean_n_events", mean_n_events),
+        ("mean_duration_days", mean_duration),
+        ("mean_area_km2", mean_area),
+        ("sum_area_km2", sum_area),
+    ], zone_label, monthly=False)
+
+    return pd.DataFrame(rows)
 
 
 # ============================================================
 # Everything below runs ONCE PER ZONE
 # ============================================================
-def build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label):
-    """
-    Build a tidy (long-format) monthly summary table for one zone with columns:
-    Year | Month | Zone | Parameter | Value
-
-    Parameters included:
-      - mean_intensity_degC     (field-based, from mhw_meanintensity_filtered)
-      - activity_degC_days_m2   (field-based, from mhw_meanintensity_filtered * cell_area)
-      - number_of_events        (event-based, from event_df, counted by event start month)
-      - mean_duration_days      (event-based, from event_df)
-      - mean_area_km2           (event-based, from event_df)
-      - sum_area_km2            (event-based, from event_df)
-    """
-    rows = []
-
-    # ---- Field-based: mean intensity ----
-    intensity_da = mhw_meanintensity_filtered.where(mhw_meanintensity_filtered != 0)
-    intensity_ts = intensity_da.mean(dim=('lat', 'lon'), skipna=True).to_series()
-    if len(intensity_ts) > 0:
-        intensity_monthly = intensity_ts.groupby([intensity_ts.index.year, intensity_ts.index.month]).mean()
-        for (yr, mo), val in intensity_monthly.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "mean_intensity_degC", "Value": val})
-
-    # ---- Field-based: activity (intensity x cell area, summed over days in month) ----
-    activity_da = mhw_meanintensity_filtered.fillna(0) * cell_area
-    activity_ts = activity_da.sum(dim=('lat', 'lon'), skipna=True).to_series()
-    if len(activity_ts) > 0:
-        activity_monthly = activity_ts.groupby([activity_ts.index.year, activity_ts.index.month]).sum()
-        for (yr, mo), val in activity_monthly.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "activity_degC_days_m2", "Value": val})
-
-    # ---- Event-based: number of events, mean duration, mean/sum area ----
-    if not event_df.empty:
-        ev = event_df.copy()
-        ev["start_time"] = pd.to_datetime(ev["start_time"])
-        ev["Year"] = ev["start_time"].dt.year
-        ev["Month"] = ev["start_time"].dt.month
-
-        # 1) count events per grid cell, per Year/Month
-    n_events = ev.groupby(["Year", "Month"]).size()
-    events_per_cell = ev.groupby(["Year", "Month", "lat", "lon"]).size()
-
-    # 2) average that count across all grid cells in the zone
-    mean_n_events = events_per_cell.groupby(["Year", "Month"]).mean()
-
-    mean_duration = ev.groupby(["Year", "Month"])["duration"].mean()
-    mean_area = ev.groupby(["Year", "Month"])["area"].mean() / 1e6
-    sum_area = ev.groupby(["Year", "Month"])["area"].sum() / 1e6
-
-    n_events = ev.groupby(["Year", "Month"]).size()
-    for (yr, mo), val in n_events.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "number_of_events", "Value": val})
-
-    for (yr, mo), val in mean_n_events.items():
-        rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                     "Parameter": "mean_n_events", "Value": val})
-    for (yr, mo), val in mean_duration.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "mean_duration_days", "Value": val})
-    for (yr, mo), val in mean_area.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "mean_area_km2", "Value": val})
-    for (yr, mo), val in sum_area.items():
-            rows.append({"Year": yr, "Month": mo, "Zone": zone_label,
-                         "Parameter": "sum_area_km2", "Value": val})
-
-    return pd.DataFrame(rows)
-
-
 def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     """
     Run the full MHW detection + plotting pipeline on `sst`, which has
     already been masked down to a single zone. `zone_label` is used to
     tag output filenames and plot titles.
+    Returns (event_df, monthly_summary_df, annual_summary_df).
     """
     print("=" * 70)
     print(f"ZONE {zone_id}: {zone_label}")
     print("=" * 70)
 
     region_tag = f"{region}.{zone_label}"
+
+    # Number of ocean grid cells in this zone (denominator for mean_n_events)
+    n_cells = int(np.isfinite(sst.isel(time=0)).sum())
+    print("n_cells in zone:", n_cells)
 
     print("TIME MHW_CALCULATION - START", (time.time() - start_time_script) / 60)
     print("np.shape(sst)", np.shape(sst))
@@ -395,7 +457,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     # ---- MHW features (event table) ----
     events_count = xr.DataArray(
         np.zeros((len(mhw_meanintensity_filtered.time), len(mhw_meanintensity_filtered.lat),
-                   len(mhw_meanintensity_filtered.lon))),
+                  len(mhw_meanintensity_filtered.lon))),
         dims=('time', 'lat', 'lon'),
         coords={'time': mhw_meanintensity_filtered.time, 'lat': mhw_meanintensity_filtered.lat,
                 'lon': mhw_meanintensity_filtered.lon}
@@ -433,19 +495,19 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     event_df.to_csv(
         f"{pathdata}/OUTPUT/MHWevents_{model}.{yearbeg}{yearend}.{region_tag}.csv", index=False)
 
-    # ---- number of events ----
+    # ---- number of events (annual events per grid cell, over ALL cells in the zone) ----
     print("TIME PLOT - NUMBER EVENTS", (time.time() - start_time_script) / 60)
-    total_events = (events_count == 1).sum(dim=('lat', 'lon'))
     events_per_year = (
-        total_events
-        .where(total_events != 0)
+        (events_count == 1)
         .groupby('time.year')
-        .mean(dim='time', skipna=True)
+        .sum(dim='time')
+        .sum(dim=('lat', 'lon'))
+        / n_cells
     )
 
     plt.figure(figsize=(7, 4))
     plt.plot(year_range, events_per_year, c='red', marker='o')
-    plt.ylabel("Mean number of events (-) ", fontsize=size_fonte)
+    plt.ylabel("Events per grid cell (yr⁻¹)", fontsize=size_fonte)
     plt.title(f"Zone {zone_label} - day {start_day} mth {start_mth} to day {end_day} mth {end_mth}",
               fontsize=size_fonte)
     plt.xticks(fontsize=size_fonte)
@@ -453,9 +515,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     plt.grid(True)
     #plt.show()
 
-    # ---- map: number of events per year ----
-    min_value_leg = 0
-    max_value_leg = 2e11
+    # ---- map: number of MHW days per year ----
     n_years = yearend - yearbeg + 1
     years = range(yearbeg, yearend + 1)
     ncols = 6
@@ -469,15 +529,15 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
         nb_events_plot = (mhw_meanintensity_filtered > 0).sel(time=slice(startdate, enddate)).sum(dim='time')
         ax = axes[i]
         im = nb_events_plot.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(), cmap='Reds',
-                                             add_colorbar=False, zorder=1)
+                                            add_colorbar=False, zorder=1)
         ax.set_title(f'{yr}', fontsize=12)
     for j in range(i + 1, len(axes)):
         axes[j].axis('off')
     fig.subplots_adjust(bottom=0.15)
     if im is not None:
         cbar = fig.colorbar(im, ax=axes, orientation='horizontal', fraction=0.05, pad=0.05)
-        cbar.set_label('Number of events', fontsize=12)
-    fig.suptitle(f'MHW number of events, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
+        cbar.set_label('Number of MHW days', fontsize=12)
+    fig.suptitle(f'MHW days, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
                  f'from {yearbeg} to {yearend}', fontsize=12)
     #plt.show()
 
@@ -508,9 +568,9 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
             ax.set_title(f'{yr} (no data)', fontsize=12)
             continue
         da_plot = xr.DataArray(duration_2d.values, dims=("lat", "lon"),
-                                coords={"lat": duration_2d.index, "lon": duration_2d.columns})
+                               coords={"lat": duration_2d.index, "lon": duration_2d.columns})
         im = da_plot.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(), cmap='Reds',
-                                      vmin=min_value_leg, vmax=max_value_leg, add_colorbar=False, zorder=1)
+                                     vmin=min_value_leg, vmax=max_value_leg, add_colorbar=False, zorder=1)
         ax.set_title(f'{yr}', fontsize=12)
     for j in range(i + 1, len(axes)):
         axes[j].axis('off')
@@ -537,7 +597,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
 
     plt.figure(figsize=(7, 4))
     plt.plot(area_per_year_sum.index, area_per_year_sum.values / 1e6, c='red', marker='o')
-    plt.ylabel("Sum area (km2)", fontsize=size_fonte)
+    plt.ylabel("Cumulative MHW area (km²)", fontsize=size_fonte)
     plt.title(f"Zone {zone_label} - {start_day}/{start_mth} to {end_day}/{end_mth}", fontsize=size_fonte)
     plt.grid(True)
     #plt.show()
@@ -556,16 +616,17 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
             ax.set_title(f'{yr} (no data)', fontsize=12)
             continue
         da_plot = xr.DataArray(area_2d.values, dims=("lat", "lon"),
-                                coords={"lat": area_2d.index, "lon": area_2d.columns})
+                               coords={"lat": area_2d.index, "lon": area_2d.columns})
         da_plot.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(), cmap='Reds',
-                                 add_colorbar=False, zorder=1)
+                                add_colorbar=False, zorder=1)
         ax.set_title(f'{yr}', fontsize=12)
     for j in range(i + 1, len(axes)):
         axes[j].axis('off')
     fig.subplots_adjust(bottom=0.15)
     if da_plot is not None:
         cbar_ax = fig.add_axes([0.25, 0.05, 0.5, 0.02])
-        da_plot.plot.pcolormesh(cmap='Reds', add_colorbar=True, cbar_ax=cbar_ax, cbar_kwargs={'orientation': 'horizontal'})
+        da_plot.plot.pcolormesh(cmap='Reds', add_colorbar=True, cbar_ax=cbar_ax,
+                                cbar_kwargs={'orientation': 'horizontal'})
         cbar_ax.set_title('m²', fontsize=12)
         cbar_ax.set_xlabel('')
         cbar_ax.set_ylabel('')
@@ -604,7 +665,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
         activity_plot = mhw_meanintensity_filtered.sel(time=slice(startdate, enddate)).sum(dim='time') * cell_area
         ax = axes[i]
         activity_plot.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(), cmap='Reds', add_colorbar=False,
-                                       vmin=min_value_leg, vmax=max_value_leg, zorder=1)
+                                      vmin=min_value_leg, vmax=max_value_leg, zorder=1)
         ax.set_title(f'{yr}', fontsize=12)
     for j in range(i + 1, len(axes)):
         axes[j].axis('off')
@@ -612,50 +673,67 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     if activity_plot is not None:
         cbar_ax = fig.add_axes([0.25, 0.05, 0.5, 0.02])
         activity_plot.plot.pcolormesh(cmap='Reds', add_colorbar=True, cbar_ax=cbar_ax,
-                                       cbar_kwargs={'orientation': 'horizontal'}, vmin=min_value_leg, vmax=max_value_leg)
-        cbar_ax.set_title('C.days.m²', fontsize=12)
+                                      cbar_kwargs={'orientation': 'horizontal'},
+                                      vmin=min_value_leg, vmax=max_value_leg)
+        cbar_ax.set_title('°C.days.m²', fontsize=12)
         cbar_ax.set_xlabel('')
         cbar_ax.set_ylabel('')
     fig.suptitle(f'MHW Activity, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
                  f'from {yearbeg} to {yearend}', fontsize=12)
     #plt.show()
 
-    summary_df = build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label)
+    plt.close('all')
 
-    return event_df, summary_df
+    # ---- Summary tables ----
+    summary_month = build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells)
+    summary_year = build_zone_year_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells)
+
+    return event_df, summary_month, summary_year
 
 
 # ============================================================
 # Loop over the 3 zones
 # ============================================================
 all_events = {}
-all_summaries = []
+all_month, all_year = [], []
 for zone_id, zone_label in enumerate(zone_labels):
     sst_zone = sst_full.where(zone_mask_2d == zone_id)
     mask_zone = mask_full.where(zone_mask_2d == zone_id)
-    event_df_zone, summary_df_zone = run_mhw_analysis_for_zone(sst_zone, mask_zone, zone_id, zone_label)
+    event_df_zone, s_month, s_year = run_mhw_analysis_for_zone(sst_zone, mask_zone, zone_id, zone_label)
     all_events[zone_label] = event_df_zone
-    all_summaries.append(summary_df_zone)
+    all_month.append(s_month)
+    all_year.append(s_year)
 
-# ---- Combine all zones into one tidy summary table ----
-summary_table = pd.concat(all_summaries, ignore_index=True)
-summary_table = summary_table.sort_values(["Zone", "Year", "Month", "Parameter"]).reset_index(drop=True)
 
-summary_csv_long = f"{pathdata}/OUTPUT/MHW_summary_table_long_{model}.{yearbeg}{yearend}.{region}.csv"
-summary_table.to_csv(summary_csv_long, index=False)
-print(f"Saved long-format summary table to: {summary_csv_long}")
-print(summary_table.head(20))
+# ============================================================
+# Save summary tables
+# ============================================================
+def save_tables(summaries, index_cols, prefix):
+    """Save long and wide versions of the combined summary table."""
+    long = (
+        pd.concat(summaries, ignore_index=True)
+        .sort_values(index_cols + ["Parameter"])
+        .reset_index(drop=True)
+    )
+    long_path = f"{pathdata}/OUTPUT/{prefix}_long_{model}.{yearbeg}{yearend}.{region}.csv"
+    long.to_csv(long_path, index=False)
+    print(f"Saved long-format table to: {long_path}")
 
-# ---- Optional: wide format, one column per parameter ----
-summary_table_wide = (
-    summary_table
-    .pivot_table(index=["Year", "Month", "Zone"], columns="Parameter", values="Value")
-    .reset_index()
-)
-summary_csv_wide = f"{pathdata}/OUTPUT/MHW_summary_table_wide_{model}.{yearbeg}{yearend}.{region}.csv"
-summary_table_wide.to_csv(summary_csv_wide, index=False)
-print(f"Saved wide-format summary table to: {summary_csv_wide}")
-print(summary_table_wide.head(20))
+    wide = (
+        long.pivot_table(index=index_cols, columns="Parameter", values="Value", dropna=False)
+        .reset_index()
+    )
+    wide_path = f"{pathdata}/OUTPUT/{prefix}_wide_{model}.{yearbeg}{yearend}.{region}.csv"
+    wide.to_csv(wide_path, index=False)
+    print(f"Saved wide-format table to: {wide_path}")
+    print(wide.head(10))
+
+
+# Monthly tables -> used by analysis.r (time-series analysis)
+save_tables(all_month, ["Zone", "Year", "Month"], "MHW_summary_table")
+
+# Annual tables -> used by the half-decade bar plots
+save_tables(all_year, ["Zone", "Year"], "MHW_annual_summary")
 
 # End
 duration_script = time.time() - start_time_script
