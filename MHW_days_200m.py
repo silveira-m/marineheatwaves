@@ -30,16 +30,24 @@ from shapely.ops import unary_union
 # ============================================================
 print("OPTIONS")
 
+# Domain: 'bigbox' = every ocean cell of sst_merged_big_box_IbPen.nc (one single zone)
+#         '200m'   = the 3 shelf zones (NW / SW / S) from the 200 m bathymetry shapefile
+domain = 'bigbox'
+
 pathdata = "DATA"
 pathoutputfig = "PLOT"
-pathdays = "mhwDays200"        # folder for the daily and monthly MHW tables
 compress_daily = True          # True -> .csv.gz (much smaller), False -> plain .csv
 
 # input data
 model = 'oisst'  # oisst cmems
 yearbeg = 1981
 yearend = 2025  # 2024
-region = 'Portugal_200m_bathymetry'  # Portugal 200m bathymetry from shapefile
+if domain == 'bigbox':
+    region = 'IbPen_big_box'
+    pathdays = "mhwDaysBigBox"   # folder for the daily and monthly MHW tables
+else:
+    region = 'Portugal_200m_bathymetry'  # Portugal 200m bathymetry from shapefile
+    pathdays = "mhwDays200"
 choice_mask_region = 0  # -1=no mask 4=Med
 choice_date = 0  # 0=no, 1=yes (choose start_date and end_date)
 start_mth = 1
@@ -99,48 +107,55 @@ if import_data == 'y':
         print("np.shape(mask_region)", np.shape(mask_region))
         sst_full = sst_full.where(mask_region == choice_mask_region)
 
-    # --------------------------------------------------------
-    # ZONES: load shapefile and KEEP the 3 polygons separate
-    # --------------------------------------------------------
-    shp_path = "200m/200m.shp"   # <- change this
-    gdf = gpd.read_file(shp_path)
-
-    if gdf.crs and gdf.crs.to_epsg() != 4326:
-        gdf = gdf.to_crs(epsg=4326)
-
-    # If the automatic north->south sort below mislabels a zone, set this
-    # to a 3-item list matching the RAW row order printed just below
-    # (e.g. ["NW", "S", "SW"]), and it will be used instead of auto-sorting.
-    ZONE_LABELS_OVERRIDE = None
-
-    gdf["centroid_lat"] = gdf.geometry.centroid.y
-    gdf["centroid_lon"] = gdf.geometry.centroid.x
-    print("Raw shapefile zone centroids (original row order):")
-    print(gdf[["centroid_lat", "centroid_lon"]])
-
-    if ZONE_LABELS_OVERRIDE is not None and len(ZONE_LABELS_OVERRIDE) == len(gdf):
-        gdf["zone_label"] = ZONE_LABELS_OVERRIDE
-        gdf_sorted = gdf.reset_index(drop=True)
+    if domain == 'bigbox':
+        # --------------------------------------------------------
+        # BIG BOX: the whole domain is one zone (index 0 everywhere)
+        # --------------------------------------------------------
+        zone_mask_2d = xr.zeros_like(sst_full.isel(time=0, drop=True), dtype=float)
+        zone_labels = ["BigBox"]
     else:
-        # Sort north -> south by centroid latitude and assign NW / SW / S
-        gdf_sorted = gdf.sort_values("centroid_lat", ascending=False).reset_index(drop=True)
-        default_names = ["NW", "SW", "S"]
-        if len(gdf_sorted) == len(default_names):
-            gdf_sorted["zone_label"] = default_names
+        # --------------------------------------------------------
+        # ZONES: load shapefile and KEEP the 3 polygons separate
+        # --------------------------------------------------------
+        shp_path = "200m/200m.shp"   # <- change this
+        gdf = gpd.read_file(shp_path)
+
+        if gdf.crs and gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
+
+        # If the automatic north->south sort below mislabels a zone, set this
+        # to a 3-item list matching the RAW row order printed just below
+        # (e.g. ["NW", "S", "SW"]), and it will be used instead of auto-sorting.
+        ZONE_LABELS_OVERRIDE = None
+
+        gdf["centroid_lat"] = gdf.geometry.centroid.y
+        gdf["centroid_lon"] = gdf.geometry.centroid.x
+        print("Raw shapefile zone centroids (original row order):")
+        print(gdf[["centroid_lat", "centroid_lon"]])
+
+        if ZONE_LABELS_OVERRIDE is not None and len(ZONE_LABELS_OVERRIDE) == len(gdf):
+            gdf["zone_label"] = ZONE_LABELS_OVERRIDE
+            gdf_sorted = gdf.reset_index(drop=True)
         else:
-            gdf_sorted["zone_label"] = [f"zone_{i+1}" for i in range(len(gdf_sorted))]
+            # Sort north -> south by centroid latitude and assign NW / SW / S
+            gdf_sorted = gdf.sort_values("centroid_lat", ascending=False).reset_index(drop=True)
+            default_names = ["NW", "SW", "S"]
+            if len(gdf_sorted) == len(default_names):
+                gdf_sorted["zone_label"] = default_names
+            else:
+                gdf_sorted["zone_label"] = [f"zone_{i+1}" for i in range(len(gdf_sorted))]
 
-    print("Assigned zone labels (verify these look right for your coastline!):")
-    print(gdf_sorted[["zone_label", "centroid_lat", "centroid_lon"]])
+        print("Assigned zone labels (verify these look right for your coastline!):")
+        print(gdf_sorted[["zone_label", "centroid_lat", "centroid_lon"]])
 
-    # regionmask needs a GeoDataFrame with one row per region
-    regions = regionmask.from_geopandas(gdf_sorted, names="zone_label")
+        # regionmask needs a GeoDataFrame with one row per region
+        regions = regionmask.from_geopandas(gdf_sorted, names="zone_label")
 
-    # 2D mask: each cell gets the index (0,1,2,...) of the zone it falls
-    # in, or NaN if it's outside every zone. Index order matches gdf_sorted.
-    zone_mask_2d = regions.mask(sst_full.lon, sst_full.lat)
+        # 2D mask: each cell gets the index (0,1,2,...) of the zone it falls
+        # in, or NaN if it's outside every zone. Index order matches gdf_sorted.
+        zone_mask_2d = regions.mask(sst_full.lon, sst_full.lat)
 
-    zone_labels = gdf_sorted["zone_label"].tolist()  # ["NW", "SW", "S"]
+        zone_labels = gdf_sorted["zone_label"].tolist()  # ["NW", "SW", "S"]
 
     sst_full.isel(time=0).plot()
     plt.title("Full domain SST (t=0)")
@@ -174,7 +189,14 @@ year_range = range(yearbeg, yearend + 1)
 # ============================================================
 # Iberian Peninsula basemap helper
 # ============================================================
-IBERIA_EXTENT = [-11.0, -5.5, 35.8, 44.0]
+if domain == 'bigbox':
+    # Map extent follows the data so the whole box is shown
+    _dlon = float(abs(sst_full.lon[1] - sst_full.lon[0])) / 2
+    _dlat = float(abs(sst_full.lat[1] - sst_full.lat[0])) / 2
+    IBERIA_EXTENT = [float(sst_full.lon.min()) - _dlon, float(sst_full.lon.max()) + _dlon,
+                     float(sst_full.lat.min()) - _dlat, float(sst_full.lat.max()) + _dlat]
+else:
+    IBERIA_EXTENT = [-11.0, -5.5, 35.8, 44.0]
 
 
 def make_iberia_map_grid(nrows, ncols, figsize):
@@ -667,7 +689,7 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
 
 
 # ============================================================
-# Loop over the 3 zones
+# Loop over the zones (1 for the big box, 3 for the 200 m shelf)
 # ============================================================
 all_events = {}
 all_daily = []
