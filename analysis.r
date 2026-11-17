@@ -89,7 +89,7 @@ linear_label <- function(model) {
 # detected in its filename) under output_base_dir. Add or remove paths as
 # needed -- everything below runs once per entry in this vector.
 data_files <- c(
-  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_1000m_bathymetry.csv"
+  "/Users/miguelsilveira/Documents/GitHub/marineheatwaves/DATA/OUTPUT/MHW_summary_table_long_oisst.19812025.Portugal_00m_bathymetry.csv"
   # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_200m_bathymetry.csv"
   # , "/path/to/MHW_summary_table_long_oisst.19812025.Portugal_500m_bathymetry.csv"
 )
