@@ -100,7 +100,7 @@ if import_data == 'y':
     # --------------------------------------------------------
     # ZONES: load shapefile and KEEP the 3 polygons separate
     # --------------------------------------------------------
-    shp_path = "401_600m/401_600m.shp"   # <- change this
+    shp_path = "600m/600m.shp"   # <- change this
     gdf = gpd.read_file(shp_path)
 
     if gdf.crs and gdf.crs.to_epsg() != 4326:
@@ -209,15 +209,15 @@ def _rows_from_series(rows, series_list, zone_label, monthly):
                              "Parameter": name, "Value": val})
 
 
-def build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells):
+def build_zone_month_summary(mhw_meanintensity_filtered, daily_extent_km2, zone_area_km2, event_df, zone_label, n_cells):
     """
     MONTHLY summary table for one zone (used by the R time-series analysis):
     Year | Month | Zone | Parameter | Value
 
-    - Count/total metrics (number_of_events, mean_n_events, sum_area_km2,
-      activity) are 0 in months without events.
-    - Conditional averages (mean_intensity_degC, mean_duration_days,
-      mean_area_km2) are NaN in months without events.
+    - Count metrics (number_of_events, mean_n_events) are 0 in months without events.
+    - Conditional averages (mean_intensity_degC, mean_duration_days) are NaN in months
+      without events.
+    - Extent metrics (mean/max_extent_km2, *_frac) are 0 in months without MHW cells.
     - mean_n_events = events starting in the month / ALL ocean cells in the zone.
     """
     rows = []
@@ -232,19 +232,19 @@ def build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zo
     intensity_monthly.index.names = ["Year", "Month"]
     intensity_monthly = intensity_monthly.reindex(all_months)
 
-    # ---- Field-based: activity (intensity x cell area, summed over the month) ----
-    activity_da = mhw_meanintensity_filtered.fillna(0) * cell_area
-    activity_ts = activity_da.sum(dim=('lat', 'lon'), skipna=True).to_series()
-    activity_monthly = activity_ts.groupby([activity_ts.index.year, activity_ts.index.month]).sum()
-    activity_monthly.index.names = ["Year", "Month"]
-    activity_monthly = activity_monthly.reindex(all_months, fill_value=0)
+    # ---- Field-based: spatial extent (daily area in MHW, aggregated per month) ----
+    ext = daily_extent_km2.to_series()
+    ext_mean = ext.groupby([ext.index.year, ext.index.month]).mean()
+    ext_max = ext.groupby([ext.index.year, ext.index.month]).max()
+    for s in (ext_mean, ext_max):
+        s.index.names = ["Year", "Month"]
+    ext_mean = ext_mean.reindex(all_months, fill_value=0)
+    ext_max = ext_max.reindex(all_months, fill_value=0)
 
     # ---- Event-based ----
     if event_df.empty:
         n_events = pd.Series(0, index=all_months)
         mean_duration = pd.Series(np.nan, index=all_months)
-        mean_area = pd.Series(np.nan, index=all_months)
-        sum_area = pd.Series(0.0, index=all_months)
     else:
         ev = event_df.copy()
         ev["start_time"] = pd.to_datetime(ev["start_time"])
@@ -253,26 +253,24 @@ def build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zo
         g = ev.groupby(["Year", "Month"])
 
         n_events = g.size().reindex(all_months, fill_value=0)
-        mean_duration = g["duration"].mean().reindex(all_months)              # NaN when no events
-        mean_area = (g["area"].mean() / 1e6).reindex(all_months)              # NaN when no events
-        sum_area = (g["area"].sum() / 1e6).reindex(all_months, fill_value=0)
+        mean_duration = g["duration"].mean().reindex(all_months)   # NaN when no events
 
     mean_n_events = n_events / n_cells
 
     _rows_from_series(rows, [
         ("mean_intensity_degC", intensity_monthly),
-        ("activity_degC_days_m2", activity_monthly),
         ("number_of_events", n_events),
         ("mean_n_events", mean_n_events),
         ("mean_duration_days", mean_duration),
-        ("mean_area_km2", mean_area),
-        ("sum_area_km2", sum_area),
+        ("mean_extent_km2", ext_mean),
+        ("max_extent_km2", ext_max),
+        ("mean_extent_frac", ext_mean / zone_area_km2),
+        ("max_extent_frac", ext_max / zone_area_km2),
     ], zone_label, monthly=True)
 
     return pd.DataFrame(rows)
 
-
-def build_zone_year_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells):
+def build_zone_year_summary(mhw_meanintensity_filtered, daily_extent_km2, zone_area_km2, event_df, zone_label, n_cells):
     """
     ANNUAL summary table for one zone (used by the half-decade bar plots):
     Year | Zone | Parameter | Value
@@ -288,37 +286,34 @@ def build_zone_year_summary(mhw_meanintensity_filtered, cell_area, event_df, zon
     intensity_ts = intensity_da.mean(dim=('lat', 'lon'), skipna=True).to_series()
     intensity_yearly = intensity_ts.groupby(intensity_ts.index.year).mean().reindex(all_years)
 
-    # ---- Field-based: activity (intensity x cell area, summed over the year) ----
-    activity_da = mhw_meanintensity_filtered.fillna(0) * cell_area
-    activity_ts = activity_da.sum(dim=('lat', 'lon'), skipna=True).to_series()
-    activity_yearly = activity_ts.groupby(activity_ts.index.year).sum().reindex(all_years, fill_value=0)
+    # ---- Field-based: spatial extent ----
+    ext = daily_extent_km2.to_series()
+    ext_mean = ext.groupby(ext.index.year).mean().reindex(all_years, fill_value=0)
+    ext_max = ext.groupby(ext.index.year).max().reindex(all_years, fill_value=0)
 
     # ---- Event-based ----
     if event_df.empty:
         n_events = pd.Series(0, index=all_years)
         mean_duration = pd.Series(np.nan, index=all_years)
-        mean_area = pd.Series(np.nan, index=all_years)
-        sum_area = pd.Series(0.0, index=all_years)
     else:
         ev = event_df.copy()
         ev["Year"] = pd.to_datetime(ev["start_time"]).dt.year
         g = ev.groupby("Year")
 
         n_events = g.size().reindex(all_years, fill_value=0)
-        mean_duration = g["duration"].mean().reindex(all_years)              # NaN when no events
-        mean_area = (g["area"].mean() / 1e6).reindex(all_years)              # NaN when no events
-        sum_area = (g["area"].sum() / 1e6).reindex(all_years, fill_value=0)
+        mean_duration = g["duration"].mean().reindex(all_years)    # NaN when no events
 
     mean_n_events = n_events / n_cells
 
     _rows_from_series(rows, [
         ("mean_intensity_degC", intensity_yearly),
-        ("activity_degC_days_m2", activity_yearly),
         ("number_of_events", n_events),
         ("mean_n_events", mean_n_events),
         ("mean_duration_days", mean_duration),
-        ("mean_area_km2", mean_area),
-        ("sum_area_km2", sum_area),
+        ("mean_extent_km2", ext_mean),
+        ("max_extent_km2", ext_max),
+        ("mean_extent_frac", ext_mean / zone_area_km2),
+        ("max_extent_frac", ext_max / zone_area_km2),
     ], zone_label, monthly=False)
 
     return pd.DataFrame(rows)
@@ -433,6 +428,11 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
     ds_out = xr.open_dataset(out_nc)
     mhw_meanintensity_filtered = ds_out["mhw_meanintensity_filtered"]
     print("mhw_meanintensity_filtered", mhw_meanintensity_filtered.shape)
+
+    in_mhw = (mhw_meanintensity_filtered > 0)   # NaN > 0 is False, so cells outside the zone are ignored
+    zone_area_km2 = float(cell_area.where(np.isfinite(sst.isel(time=0))).sum()) / 1e6
+    daily_extent_km2 = (in_mhw * cell_area).sum(dim=('lat', 'lon')) / 1e6
+    daily_extent_frac = daily_extent_km2 / zone_area_km2
 
     # ---- Intensity ----
     print("TIME PLOT - INTENSITY", (time.time() - start_time_script) / 60)
@@ -583,110 +583,24 @@ def run_mhw_analysis_for_zone(sst, mask, zone_id, zone_label):
         cbar_ax.set_xlabel('days', fontsize=12)
     #plt.show()
 
-    # ---- area ----
-    print("TIME PLOT - AREA", (time.time() - start_time_script) / 60)
-    area_per_year_mean = event_df.groupby("year")["area"].mean().reindex(year_range, fill_value=0)
-    area_per_year_sum = event_df.groupby("year")["area"].sum().reindex(year_range, fill_value=0)
+    # ---- spatial extent ----
+    print("TIME PLOT - EXTENT", (time.time() - start_time_script) / 60)
+    ext_mean = daily_extent_frac.groupby('time.year').mean() * 100
+    ext_max = daily_extent_frac.groupby('time.year').max() * 100
 
     plt.figure(figsize=(7, 4))
-    plt.plot(area_per_year_mean.index, area_per_year_mean.values / 1e6, c='red', marker='o')
-    plt.ylabel("Mean area (km²)", fontsize=size_fonte)
+    plt.plot(year_range, ext_mean, c='red', marker='o', label='Annual mean')
+    plt.plot(year_range, ext_max, c='darkred', marker='s', linestyle='--', label='Annual max')
+    plt.ylabel("MHW spatial extent (% of zone)", fontsize=size_fonte)
     plt.title(f"Zone {zone_label} - {start_day}/{start_mth} to {end_day}/{end_mth}", fontsize=size_fonte)
+    plt.legend()
     plt.grid(True)
-    #plt.show()
-
-    plt.figure(figsize=(7, 4))
-    plt.plot(area_per_year_sum.index, area_per_year_sum.values / 1e6, c='red', marker='o')
-    plt.ylabel("Cumulative MHW area (km²)", fontsize=size_fonte)
-    plt.title(f"Zone {zone_label} - {start_day}/{start_mth} to {end_day}/{end_mth}", fontsize=size_fonte)
-    plt.grid(True)
-    #plt.show()
-
-    fig, axes = make_iberia_map_grid(nrows, ncols, figsize=(ncols * 3, nrows * 2.5))
-    da_plot = None
-    for i, yr in enumerate(years):
-        ax = axes[i]
-        area_2d = (
-            event_df[event_df["year"] == yr]
-            .groupby(["lat", "lon"])["area"]
-            .mean()
-            .unstack(level="lon")
-        )
-        if area_2d.empty or area_2d.isna().all().all():
-            ax.set_title(f'{yr} (no data)', fontsize=12)
-            continue
-        da_plot = xr.DataArray(area_2d.values, dims=("lat", "lon"),
-                               coords={"lat": area_2d.index, "lon": area_2d.columns})
-        da_plot.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(), cmap='Reds',
-                                add_colorbar=False, zorder=1)
-        ax.set_title(f'{yr}', fontsize=12)
-    for j in range(i + 1, len(axes)):
-        axes[j].axis('off')
-    fig.subplots_adjust(bottom=0.15)
-    if da_plot is not None:
-        cbar_ax = fig.add_axes([0.25, 0.05, 0.5, 0.02])
-        da_plot.plot.pcolormesh(cmap='Reds', add_colorbar=True, cbar_ax=cbar_ax,
-                                cbar_kwargs={'orientation': 'horizontal'})
-        cbar_ax.set_title('m²', fontsize=12)
-        cbar_ax.set_xlabel('')
-        cbar_ax.set_ylabel('')
-    fig.suptitle(f'MHW area, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
-                 f'from {yearbeg} to {yearend}', fontsize=12)
-    #plt.show()
-
-    # ---- activity ----
-    print("TIME PLOT - ACTIVITY", (time.time() - start_time_script) / 60)
-    mhw_meanintensity_weighted = mhw_meanintensity_filtered * cell_area
-    activity_sum_per_year = mhw_meanintensity_weighted.groupby('time.year').sum(dim='time')
-    total_activity = activity_sum_per_year.sum(dim=['lon', 'lat'])
-
-    model_1 = np.polyfit(year_range, total_activity, 2)
-    predict_1 = np.poly1d(model_1)
-    y_lin_reg_1 = predict_1(year_range)
-
-    plt.figure(figsize=(7, 4))
-    plt.plot(year_range, y_lin_reg_1 / 10 ** 12, c='red', linestyle='--')
-    plt.plot(year_range, total_activity / 10 ** 12, c='red', marker='o')
-    plt.ylabel("MHWs Activity (°C.days.10⁶km²) ", fontsize=size_fonte)
-    plt.title(f"Zone {zone_label} - day {start_day} mth {start_mth} to day {end_day} mth {end_mth}",
-              fontsize=size_fonte)
-    plt.xticks(fontsize=size_fonte)
-    plt.yticks(fontsize=size_fonte)
-    plt.grid(True)
-    #plt.show()
-
-    min_value_leg = 0
-    max_value_leg = 2e11
-    fig, axes = make_iberia_map_grid(nrows, ncols, figsize=(ncols * 3, nrows * 2.5))
-    activity_plot = None
-    for i, yr in enumerate(years):
-        startdate = f'{yr}-{start_mth}-{start_day}'
-        enddate = f'{yr}-{end_mth}-{end_day}' if start_mth <= end_mth else f'{yr+1}-{end_mth}-{end_day}'
-        activity_plot = mhw_meanintensity_filtered.sel(time=slice(startdate, enddate)).sum(dim='time') * cell_area
-        ax = axes[i]
-        activity_plot.plot.pcolormesh(ax=ax, transform=ccrs.PlateCarree(), cmap='Reds', add_colorbar=False,
-                                      vmin=min_value_leg, vmax=max_value_leg, zorder=1)
-        ax.set_title(f'{yr}', fontsize=12)
-    for j in range(i + 1, len(axes)):
-        axes[j].axis('off')
-    fig.subplots_adjust(bottom=0.15)
-    if activity_plot is not None:
-        cbar_ax = fig.add_axes([0.25, 0.05, 0.5, 0.02])
-        activity_plot.plot.pcolormesh(cmap='Reds', add_colorbar=True, cbar_ax=cbar_ax,
-                                      cbar_kwargs={'orientation': 'horizontal'},
-                                      vmin=min_value_leg, vmax=max_value_leg)
-        cbar_ax.set_title('°C.days.m²', fontsize=12)
-        cbar_ax.set_xlabel('')
-        cbar_ax.set_ylabel('')
-    fig.suptitle(f'MHW Activity, zone {zone_label} ({start_mth}-{start_day} - {end_mth}-{end_day}) '
-                 f'from {yearbeg} to {yearend}', fontsize=12)
-    #plt.show()
 
     plt.close('all')
 
     # ---- Summary tables ----
-    summary_month = build_zone_month_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells)
-    summary_year = build_zone_year_summary(mhw_meanintensity_filtered, cell_area, event_df, zone_label, n_cells)
+    summary_month = build_zone_month_summary(mhw_meanintensity_filtered, daily_extent_km2, zone_area_km2, event_df, zone_label, n_cells)
+    summary_year = build_zone_year_summary(mhw_meanintensity_filtered, daily_extent_km2, zone_area_km2, event_df, zone_label, n_cells)
 
     return event_df, summary_month, summary_year
 
